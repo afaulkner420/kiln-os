@@ -1,0 +1,215 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The boards' Klipper firmware on the Adventurer 5M (modelled on ad5x-mcu, without the IFS).
+# WORK IN PROGRESS, NOT TESTED ON A PRINTER. Do not run "flash-*" before "probe" has
+# confirmed the reset/boot GPIO lines on your unit (docs/ad5m-boot.md, "MCU bring-up").
+#
+# Kiln OS needs mainline Klipper on the mainboard and on the toolhead board (eboard), at
+# the version this image was built with (/usr/share/ad5x/mcu/VERSION). At start-up
+# ("boot", S60ad5m-mcu) both are checked and flashed when they differ, with Kiln's own
+# flashers (ad5x-flash-n32, ad5x-flash-iap): Flashforge's NationsCommand and IAPCommand are
+# never used to flash Kiln firmware.
+#   - mainboard: Klipper "identify" on its port; another answer: ad5x-flash-n32 through the
+#     chip's ROM bootloader (BOOT0/NRST over sysfs GPIO), verified, identified again;
+#   - eboard: only its bootloader can write it; it waits after power-on and after a
+#     reset ("Ready." at 115200 baud). If it waits and the last eboard flash on record
+#     isn't this version: ad5x-flash-iap, then start it ('A'). A running application of
+#     another version is asked for the bootloader (Klipper's serial bootloader request,
+#     mcu-patches 0002) and flashed the same way; otherwise a power-cycle is needed.
+# Way back to stock: "restore-stock" runs stock's own board update script (copied from this
+# printer by ad5m-vendor), so Flashforge's firmware returns without our flashers.
+#
+# usage: ad5m-mcu boot            at start-up (S60ad5m-mcu)
+#        ad5m-mcu status          versions on the boards and wanted (not while Klipper runs)
+#        ad5m-mcu probe           read-only: connect to the mainboard's ROM bootloader with the
+#                                 configured GPIO lines, print the chip info, reset. Safe test of
+#                                 the NRST/BOOT0 numbers (refused while Klipper runs)
+#        ad5m-mcu flash-mainboard | flash-eboard
+#        ad5m-mcu restore-stock   flash Flashforge's own board firmware (stock's run.sh)
+#        ad5m-mcu tools           check the flashing tools are installed
+# /data/ad5x/mcu.disable: "boot" only starts the eboard, flashes nothing.
+# Log: /data/ad5x/mcu/log.
+#
+# Test overrides: AD5M_DATA, AD5M_DEV, AD5M_MCU_FW (/usr/share/ad5x/mcu), KILN_BOARD_FILE,
+# AD5M_BOOT0_GPIO, AD5M_NRST_GPIO.
+: "${AD5M_DATA:=/data}" "${AD5M_DEV:=/dev}" "${AD5M_MCU_FW:=/usr/share/ad5x/mcu}"
+. ${AD5M_LIB:-/usr/lib/ad5x}/board.sh
+ST=$AD5M_DATA/ad5x/mcu
+LOG=$ST/log
+MB=$AD5M_DEV/$(basename "$(board_get MAINBOARD_TTY)")
+EB=$AD5M_DEV/$(basename "$(board_get EBOARD_TTY)")
+BAUD=$(board_get MCU_BAUD); BAUD=${BAUD:-230400}
+BOOT0=${AD5M_BOOT0_GPIO:-$(board_get MCU_BOOT0_GPIO)}
+NRST=${AD5M_NRST_GPIO:-$(board_get MCU_NRST_GPIO)}
+WANT=$(cat "$AD5M_MCU_FW/VERSION" 2>/dev/null)
+
+say() { echo "ad5m-mcu: $*"; echo "$(date '+%F %T') $*" >> "$LOG" 2>/dev/null; }
+ver() {	# PORT [TIMEOUT] -> the version its Klipper firmware reports, empty if none answers
+	ad5x-mcu-version --port "$1" --baud "$BAUD" --timeout "${2:-3}" 2>/dev/null
+}
+secs() { s=$(cut -d. -f1 /proc/uptime 2>/dev/null); echo "${s:-$(date +%s)}"; }
+klippy_running() { ps w 2>/dev/null | grep -v grep | grep -q "klippy/klippy.py"; }
+tools() {
+	command -v ad5x-flash-n32 >/dev/null 2>&1 && command -v ad5x-flash-iap >/dev/null 2>&1 &&
+		command -v boot_eboard >/dev/null 2>&1 && command -v ad5x-mcu-version >/dev/null 2>&1 && return 0
+	say "tools missing: ad5x-flash-n32, ad5x-flash-iap, boot_eboard or ad5x-mcu-version (reinstall the image)"
+	return 1
+}
+gpios() {	# the mainboard flasher needs both lines; never guess them
+	[ -n "$BOOT0" ] && [ -n "$NRST" ] && return 0
+	say "MCU_BOOT0_GPIO / MCU_NRST_GPIO are not set in $KILN_BOARD_FILE: the mainboard cannot be flashed (docs/ad5m-boot.md)"
+	return 1
+}
+limit() { l=$1; shift; "$@" & lp=$!; ( sleep "$l"; kill $lp 2>/dev/null ) & lk=$!; wait $lp; lrc=$?; kill $lk 2>/dev/null; return $lrc; }
+
+eboard_runs() {	# [SECONDS]: the eboard application answers with WANT within SECONDS (60)
+	t0=$(secs); end=$((t0 + ${1:-60}))
+	while :; do
+		[ "$(ver "$EB" 5)" = "$WANT" ] && { say "eboard: answers $WANT after $(( $(secs) - t0 )) s"; return 0; }
+		[ "$(secs)" -lt $end ] || return 1
+	done
+}
+eboard_to_bootloader() {	# Klipper's serial bootloader request: a plain reset into the bootloader
+	limit 10 python3 -c 'import os, sys, termios, tty
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+tty.setraw(fd)
+a = termios.tcgetattr(fd)
+a[2] |= termios.CLOCAL | termios.CREAD
+a[4] = a[5] = termios.B230400
+termios.tcsetattr(fd, termios.TCSANOW, a)
+os.write(fd, b"\x7e \x1c Request Serial Bootloader!! ~")
+termios.tcdrain(fd)
+os.close(fd)' "$EB" 2>/dev/null || return 1
+	boot_eboard --port "$EB" --listen 2>/dev/null
+}
+
+flash_mainboard() {
+	tools && gpios || return 1
+	say "mainboard: flashing $WANT (ad5x-flash-n32, BOOT0=gpio$BOOT0 NRST=gpio$NRST)"
+	ad5x-flash-n32 -p "$MB" --boot0-gpio "$BOOT0" --nrst-gpio "$NRST" \
+		--uid-file "$ST/mainboard.uid" "$AD5M_MCU_FW/mainboard.bin" > "$ST/nations.log" 2>&1
+	rc=$?
+	if [ $rc != 0 ] || ! grep -q "verification succeeded" "$ST/nations.log"; then
+		say "mainboard: flashing failed (exit $rc, $ST/nations.log)"; return 1
+	fi
+	sleep 1
+	v=$(ver "$MB")
+	[ "$v" = "$WANT" ] || { say "mainboard: flashed, but it reports '${v:-nothing}'"; return 1; }
+	say "mainboard: $WANT"
+}
+flash_eboard() {	# its bootloader must be waiting
+	tools || return 1
+	say "eboard: flashing $WANT (ad5x-flash-iap)"
+	rm -f "$ST/eboard"
+	ad5x-flash-iap -p "$EB" "$AD5M_MCU_FW/eboard.hex" > "$ST/iap.log" 2>&1
+	rc=$?
+	# a start reply other than ACK does not mean the write failed (seen on the AD5X)
+	if [ $rc != 0 ] && grep -q "STM32Write: success" "$ST/iap.log" && ! grep -q "HD" "$ST/iap.log"; then
+		boot_eboard --port "$EB" 2>/dev/null || say "eboard: no start after the write and 'A'"
+		eboard_runs 60 && rc=0
+	fi
+	if [ $rc != 0 ] || ! grep -q "STM32Write: success" "$ST/iap.log" || grep -q "HD" "$ST/iap.log"; then
+		say "eboard: flashing failed (exit $rc, $ST/iap.log)"; return 1
+	fi
+	echo "$WANT" > "$ST/eboard"
+}
+eboard_soft_flash() {	# [waiting]
+	if [ "${1:-}" != waiting ]; then
+		say "eboard: asking its application for the bootloader"
+		eboard_to_bootloader || { say "eboard: no bootloader after the request"; return 1; }
+	fi
+	flash_eboard || return 1
+	eboard_runs 5 && return 0
+	boot_eboard --port "$EB" 2>/dev/null || say "eboard: no start after 'A'"
+	eboard_runs 30
+}
+
+boot() {
+	mkdir -p "$ST"
+	if [ -f "$AD5M_DATA/ad5x/mcu.disable" ]; then
+		say "mcu.disable: no board updates"; boot_eboard --port "$EB"; return 0
+	fi
+	[ -n "$WANT" ] || { say "no firmware in $AD5M_MCU_FW"; boot_eboard --port "$EB"; return 1; }
+	failed= mbflashed=
+	ver "$MB" > "$ST/.mbver" 2>/dev/null & vpid=$!
+	listen=1; boot_eboard --port "$EB" --listen 2>/dev/null && listen=0
+	wait $vpid
+	mv=$(cat "$ST/.mbver" 2>/dev/null); rm -f "$ST/.mbver"
+	if [ "$mv" != "$WANT" ]; then
+		say "mainboard runs '${mv:-nothing}', want $WANT"
+		flash_mainboard || failed=1
+		mbflashed=1
+		listen=1; boot_eboard --port "$EB" --listen 2>/dev/null && listen=0
+	fi
+	if [ $listen = 0 ]; then
+		if [ "$(cat "$ST/eboard" 2>/dev/null)" != "$WANT" ]; then
+			flash_eboard || failed=1
+		fi
+		boot_eboard --port "$EB" || say "eboard: no start after 'A'"
+	fi
+	ev=$(ver "$EB")
+	if [ -z "$ev" ] || [ "$ev" = "$WANT" ]; then
+		eboard_runs && ev=$WANT || ev=$(ver "$EB")
+	fi
+	if [ -n "$ev" ] && [ "$ev" != "$WANT" ]; then
+		say "eboard runs '$ev', want $WANT"
+		if eboard_soft_flash; then ev=$WANT; else ev=$(ver "$EB"); fi
+	fi
+	if [ "$ev" = "$WANT" ]; then echo "$WANT" > "$ST/eboard"
+	else rm -f "$ST/eboard"; say "eboard runs '${ev:-nothing}', want $WANT: needs a power-cycle"; [ -n "$failed" ] || failed=power; fi
+	[ -z "$mbflashed" ] || mv=$(ver "$MB" 1)
+	if [ -z "$failed" ] && [ "$mv" = "$WANT" ]; then
+		if [ ! -f "$ST/klipper-enabled" ]; then
+			touch "$AD5M_DATA/ad5x/klipper.enable" "$ST/klipper-enabled"
+			say "both boards on $WANT: Klipper enabled"
+		fi
+		return 0
+	fi
+	# a failed update must not leave the try-once counter armed for a power-cycle that the
+	# user was asked for: count this start as complete so stock does not take over
+	[ "$failed" = power ] && /etc/init.d/S99ad5m-booted start 2>/dev/null
+	return 1
+}
+
+status() {
+	echo "want=${WANT:-?}"
+	if klippy_running; then
+		echo "mainboard=(in use by Klipper)"; echo "eboard=(in use by Klipper)"
+	else
+		echo "mainboard=$(ver "$MB" 2)"; echo "eboard=$(ver "$EB" 2)"
+	fi
+	echo "eboard_flashed=$(cat "$ST/eboard" 2>/dev/null)"
+	echo "gpio_boot0=${BOOT0:-unset} gpio_nrst=${NRST:-unset}"
+	tools >/dev/null 2>&1 && echo "tools=ok" || echo "tools=missing"
+	[ -f "$AD5M_DATA/ad5x/mcu.disable" ] && echo "disabled=1"
+	true
+}
+
+restore_stock() {	# stock's own script, copied by ad5m-vendor, flashes Flashforge's firmware
+	klippy_running && { echo "ad5m-mcu: Klipper runs: stop it first" >&2; return 1; }
+	d=$(ls -d "$AD5M_DATA"/ad5x/vendor/stock/mcu/[0-9]* 2>/dev/null | sort -V | tail -n 1)
+	[ -n "$d" ] && [ -f "$d/run.sh" ] || { say "no stock board firmware in the vendor files (ad5m-vendor status)"; return 1; }
+	say "restore-stock: running stock's $d/run.sh"
+	chmod +x "$d"/NationsCommand "$d"/IAPCommand 2>/dev/null
+	rm -f "$ST/eboard" "$ST/klipper-enabled" "$AD5M_DATA/ad5x/klipper.enable"
+	( cd "$d" && sh ./run.sh ) >> "$LOG" 2>&1
+	say "restore-stock: finished (exit $?); power-cycle the printer"
+}
+
+case "$1" in
+boot) boot ;;
+status) status ;;
+probe)
+	klippy_running && { echo "ad5m-mcu: Klipper runs: stop it first" >&2; exit 1; }
+	mkdir -p "$ST"; tools && gpios && ad5x-flash-n32 --check -p "$MB" --boot0-gpio "$BOOT0" --nrst-gpio "$NRST" ;;
+flash-mainboard)
+	klippy_running && { echo "ad5m-mcu: Klipper runs: stop it first" >&2; exit 1; }
+	mkdir -p "$ST"; [ -n "$WANT" ] && flash_mainboard ;;
+flash-eboard)
+	klippy_running && { echo "ad5m-mcu: Klipper runs: stop it first" >&2; exit 1; }
+	mkdir -p "$ST"; [ -n "$WANT" ] && tools || exit 1
+	if boot_eboard --port "$EB" --listen 2>/dev/null; then eboard_soft_flash waiting; else eboard_soft_flash; fi ;;
+restore-stock) mkdir -p "$ST"; restore_stock ;;
+tools) mkdir -p "$ST"; tools ;;
+*) sed -n '2,/^# Log:/p' "$0"; exit 2 ;;
+esac

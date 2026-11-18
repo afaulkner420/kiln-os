@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Backlight of the Adventurer 5M panel, through the Allwinner display driver (/dev/disp).
+
+usage: ad5m-backlight            print the current brightness (0-255)
+       ad5m-backlight 120        set 0-255 (0 switches the backlight off)
+       ad5m-backlight 60%        set a percentage
+
+The panel has no sysfs backlight class. The ioctl numbers and the argument layout (a pair of
+32-bit words: screen 0, value) are the ones the AD5M mod's backlight library uses
+(consp/flashforge_ad5m_backlight, GPL-3.0); this file is written for Kiln OS from that
+description. WORK IN PROGRESS, NOT TESTED ON A PRINTER.
+"""
+import fcntl
+import os
+import struct
+import sys
+
+DISP = "/dev/disp"
+SET_BRIGHTNESS = 0x102
+GET_BRIGHTNESS = 0x103
+BACKLIGHT_ON = 0x104
+BACKLIGHT_OFF = 0x105
+
+
+def parse(text):
+    t = text.strip()
+    if t.endswith("%"):
+        v = float(t[:-1])
+        if not 0 <= v <= 100:
+            raise ValueError("percentage must be 0-100")
+        return int(v * 255 / 100)
+    v = int(float(t))
+    if not 0 <= v <= 255:
+        raise ValueError("value must be 0-255")
+    return v
+
+
+def main(argv):
+    try:
+        # os.open without O_CREAT: a missing /dev/disp is an error, never a new file
+        fd = os.open(DISP, os.O_RDWR)
+        try:
+            if len(argv) < 2:
+                buf = bytearray(4)
+                print(fcntl.ioctl(fd, GET_BRIGHTNESS, buf))
+                return 0
+            value = parse(argv[1])
+            if value == 0:
+                fcntl.ioctl(fd, BACKLIGHT_OFF, b"")
+            else:
+                fcntl.ioctl(fd, BACKLIGHT_ON, b"")
+                fcntl.ioctl(fd, SET_BRIGHTNESS, struct.pack("=LL", 0, value))
+            return 0
+        finally:
+            os.close(fd)
+    except (OSError, ValueError) as e:
+        print("ad5m-backlight: %s" % e, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

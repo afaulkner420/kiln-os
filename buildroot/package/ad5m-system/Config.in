@@ -1,0 +1,7 @@
+config BR2_PACKAGE_AD5M_SYSTEM
+	bool "ad5m-system"
+	help
+	  Kiln OS board support for the Flashforge Adventurer 5M / 5M Pro:
+	  the hand-over from the stock system (ad5m-init), vendor files,
+	  data partition, network, Wi-Fi, display backlight, buzzer and the
+	  boards' firmware. Work in progress (docs/ad5m-boot.md).

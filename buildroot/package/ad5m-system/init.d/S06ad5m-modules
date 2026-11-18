@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Kernel modules from the stock system (Adventurer 5M). WORK IN PROGRESS, NOT TESTED.
+# The stock kernel has display, touch, PWM, ethernet, MMC and USB built in (measured); the only
+# module the printer needs is the Wi-Fi driver 8821cu.ko (RTL8821CU), built for kernel 5.4.61,
+# copied from the stock root into /data/ad5x/vendor by ad5m-vendor. A module for another
+# kernel is refused here (vermagic), not loaded.
+. /usr/lib/ad5x/board.sh
+case "$1" in
+start)
+	k=$(uname -r)
+	ko=$(ad5m-vendor dir)/modules/$k/8821cu.ko
+	if [ ! -f "$ko" ]; then
+		echo "ad5m-modules: no Wi-Fi driver for kernel $k ($ko): Wi-Fi stays off"
+		exit 0
+	fi
+	if grep -q '^8821cu ' /proc/modules; then
+		echo "ad5m-modules: 8821cu already loaded"
+	elif insmod "$ko"; then
+		echo "ad5m-modules: 8821cu loaded"
+	else
+		echo "ad5m-modules: insmod $ko failed (kernel messages: dmesg | tail)"
+	fi
+	;;
+esac
+exit 0

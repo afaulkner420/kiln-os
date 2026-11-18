@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The boards' firmware and the eboard start, before Klipper (Adventurer 5M). WORK IN PROGRESS.
+# S61klipper starts Klipper only when /data/ad5x/klipper.enable exists; ad5m-mcu creates it
+# once both boards run the firmware this image was built with.
+case "$1" in
+start) ad5m-mcu boot ;;
+esac
+exit 0

@@ -1,0 +1,109 @@
+# Flashforge Adventurer 5M / 5M Pro, first image: our userspace on the stock kernel.
+# WORK IN PROGRESS, NOT BUILT YET. Derived from ad5x_defconfig; see docs/ad5m-port.md.
+# Build: make -C buildroot/src O=$PWD/buildroot/output \
+#   BR2_EXTERNAL=$PWD/buildroot ad5m_defconfig all
+
+# Allwinner sun8iw20 (R528 / T113-S3 family), 2x Cortex-A7, hard float, NEON-VFPv4:
+# what the stock kernel and its modules were built for (the AD5M mod uses the same).
+BR2_arm=y
+BR2_cortex_a7=y
+BR2_ARM_FPU_NEON_VFPV4=y
+
+# Toolchain: glibc, headers for the stock 5.4 kernel (5.4.61, measured on a unit)
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_KERNEL_HEADERS_5_4=y
+
+BR2_DL_DIR="$(BR2_EXTERNAL_AD5X_PATH)/dl"
+# Fixes to Buildroot's own packages: board/ad5m/patches/<package>/
+BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/patches"
+
+# System. The stock kernel has no cgroups, so no systemd: BusyBox init, as stock.
+BR2_TARGET_GENERIC_HOSTNAME="ad5m"
+BR2_TARGET_GENERIC_ISSUE="Kiln OS"
+BR2_INIT_BUSYBOX=y
+# TODO: copy board/ad5x/busybox.fragment to board/ad5m/ and trim it
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/busybox.fragment"
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
+# BR2_PACKAGE_EUDEV_ENABLE_HWDB is not set
+# Read-only root (an ext4 image: the stock kernel has no squashfs, no overlayfs,
+# no loop devices, no initramfs)
+# BR2_TARGET_GENERIC_REMOUNT_ROOTFS_RW is not set
+# Serial login on the debug console, ttyS3 (stock inittab, 115200). The other
+# UARTs belong to boards: ttyS5 mainboard MCU, ttyS1 eboard.
+BR2_TARGET_GENERIC_GETTY_PORT="ttyS3"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+BR2_TARGET_TZ_INFO=y
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/users.table"
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/post-build.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/post-image.sh"
+
+# No kernel or bootloader built: the stock ones are used (uImage and sunxi.dtb on
+# the printer's FAT partition p1, kernel modules copied from the printer).
+
+# Python for Klipper
+BR2_PACKAGE_PYTHON3=y
+BR2_PACKAGE_PYTHON3_PYC_ONLY=y
+BR2_PACKAGE_PYTHON3_SSL=y
+BR2_PACKAGE_PYTHON_CFFI=y
+BR2_PACKAGE_PYTHON_GREENLET=y
+BR2_PACKAGE_PYTHON_JINJA2=y
+BR2_PACKAGE_PYTHON_MARKUPSAFE=y
+BR2_PACKAGE_PYTHON_SERIAL=y
+BR2_PACKAGE_PYTHON_CAN=y
+
+# Network and access
+BR2_PACKAGE_DROPBEAR=y
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+BR2_PACKAGE_WPA_SUPPLICANT_PASSPHRASE=y
+BR2_PACKAGE_IW=y
+BR2_PACKAGE_WIRELESS_REGDB=y
+BR2_PACKAGE_CHRONY=y
+BR2_PACKAGE_E2FSPROGS=y
+BR2_PACKAGE_CA_CERTIFICATES=y
+BR2_PACKAGE_IPROUTE2=y
+BR2_PACKAGE_SUDO=y
+BR2_PACKAGE_GIT=y
+BR2_PACKAGE_LIBCURL=y
+
+# fw_printenv / fw_setenv: the hand-over to Kiln OS is one U-Boot variable (docs/ad5m-boot.md);
+# /etc/fw_env.config is in the rootfs overlay (the same two env partitions as stock)
+BR2_PACKAGE_UBOOT_TOOLS=y
+BR2_PACKAGE_UBOOT_TOOLS_FWPRINTENV=y
+
+# This project
+BR2_PACKAGE_KLIPPER=y
+BR2_PACKAGE_MOONRAKER=y
+BR2_PACKAGE_FLUIDD=y
+# Only static files and the proxy
+# BR2_PACKAGE_NGINX_HTTP_REWRITE_MODULE is not set
+# BR2_PACKAGE_NGINX_HTTP_FASTCGI_MODULE is not set
+# BR2_PACKAGE_NGINX_HTTP_UWSGI_MODULE is not set
+# BR2_PACKAGE_NGINX_HTTP_SCGI_MODULE is not set
+# BR2_PACKAGE_NGINX_HTTP_MEMCACHED_MODULE is not set
+
+# Touch screen UI: GuppyScreen (not HelixScreen) on /dev/fb0 800x480, touch from the
+# SoC's resistive controller through tslib.
+# TODO: these two packages do not exist yet (package/guppyscreen, package/ad5m-system)
+BR2_PACKAGE_TSLIB=y
+BR2_PACKAGE_GUPPYSCREEN=y
+BR2_PACKAGE_AD5M_SYSTEM=y
+
+# Images: a tarball (milestone 1: unpacked into a directory on /data) and an ext4
+# image (milestone 2: its own root partition).
+BR2_TARGET_ROOTFS_TAR=y
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+BR2_TARGET_ROOTFS_EXT2_LABEL="AD5MROOT"
+# TODO: size the image once the content is known (the stock root is 1280 MiB)
+BR2_TARGET_ROOTFS_EXT2_SIZE="512M"
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_PACKAGE_HOST_DOSFSTOOLS=y
+BR2_PACKAGE_HOST_MTOOLS=y
+# Input shaper needs numpy; TODO: measure its memory on 128 MB before keeping it
+BR2_PACKAGE_PYTHON_NUMPY=y
+# TODO: one camera at most by default on this RAM budget
+BR2_PACKAGE_USTREAMER=y

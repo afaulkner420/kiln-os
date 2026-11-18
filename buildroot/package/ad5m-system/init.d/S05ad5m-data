@@ -1,0 +1,62 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Data partition and printer_data (Adventurer 5M). WORK IN PROGRESS, NOT TESTED.
+# /data is the printer's own UDISK partition (/dev/mmcblk0p7, ext4): ad5m-init already moved
+# its mount here; without it (a test boot) it is mounted now. Stock's own files there (zMod,
+# gcodes, firmware) are left alone: everything of ours is under /data/ad5x. No partition:
+# tmpfs, nothing is kept. Mirrors S05ad5x-data, minus the AD5X-only settings file.
+
+# Files this creates are readable by klipper and www-data, whoever started it
+umask 022
+. /usr/lib/ad5x/board.sh
+
+case "$1" in
+start)
+	if grep -q ' /data ' /proc/mounts; then
+		echo "ad5m-data: /data already mounted"
+	elif dev=$(board_get DATA_PART) && [ -b "$dev" ] && mount -t ext4 -o noatime "$dev" /data; then
+		echo "ad5m-data: $dev on /data"
+	else
+		echo "ad5m-data: no data partition, using tmpfs (not kept)"
+		mount -t tmpfs -o mode=0755 tmpfs /data
+	fi
+	# The old (stock) root is only needed for ad5m-vendor; read-only, left mounted
+	ad5x-clock restore 2>/dev/null
+	pd=/data/ad5x/printer_data
+	mkdir -p $pd/config $pd/logs $pd/gcodes $pd/comms /data/ad5x/ssh
+	# Vendor files (Wi-Fi driver, MAC, stock networks): copied from the stock root once
+	ad5m-vendor ensure || echo "ad5m-data: vendor files missing: Wi-Fi and the stock MAC need them (ad5m-vendor status)"
+	# Root login: the same password as stock's, from its /etc/shadow (the stock root is at
+	# /mnt/orig_root), so SSH works as before without a password in the image.
+	hash=$(sed -n 's/^root:\([^:]*\):.*/\1/p' /mnt/orig_root/etc/shadow 2>/dev/null)
+	if [ -n "$hash" ] && ! grep -q ' /etc/shadow ' /proc/mounts; then
+		mkdir -p /run/ad5x
+		(umask 077; sed "s|^root:[^:]*:|root:$hash:|" /etc/shadow > /run/ad5x/shadow)
+		chmod 600 /run/ad5x/shadow
+		mount --bind /run/ad5x/shadow /etc/shadow
+		echo "ad5m-data: root password from stock"
+	fi
+	# SSH host keys kept on /data (the root is read-only)
+	mkdir -p /data/ad5x/ssh/hostkeys /run/dropbear
+	grep -q ' /run/dropbear ' /proc/mounts || mount --bind /data/ad5x/ssh/hostkeys /run/dropbear
+	# Plugins: which are on lives in the printer's own plugins.cfg, written once
+	pl=$pd/config/plugins.cfg
+	[ -e $pl ] || { cp /usr/share/ad5x/defaults/plugins.cfg $pl 2>/dev/null && echo "ad5m-data: plugins.cfg created"; }
+	[ -d /data/ad5x/plugins ] || { mkdir -p /data/ad5x/plugins; chown klipper:klipper /data/ad5x/plugins; }
+	# First-boot copies of the printer's own files (printer.cfg, local.cfg, moonraker.conf, ...)
+	for f in /usr/share/ad5x/defaults/*; do
+		[ -f $f ] || continue
+		[ -e $pd/config/${f##*/} ] || cp $f $pd/config/
+	done
+	ad5x-config-templates /usr/share/ad5x/defaults $pd/config 2>/dev/null
+	[ -f $pd/config/moonraker.conf ] && ad5x-moonraker-migrate $pd/config/moonraker.conf
+	chown -R klipper:klipper $pd
+	chmod 700 /data/ad5x/ssh
+	. /usr/lib/ad5x/logs.sh
+	kiln_logs_trim
+	;;
+stop)
+	umount /data 2>/dev/null
+	;;
+esac
+exit 0

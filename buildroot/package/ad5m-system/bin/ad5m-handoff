@@ -1,0 +1,61 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Control the hand-over from stock to Kiln OS (see sbin/ad5m-init, docs/ad5m-boot.md).
+# WORK IN PROGRESS, NOT TESTED ON A PRINTER. Runs on stock and on Kiln OS.
+#
+# usage: ad5m-handoff status   what is set (kernel "init" variable, markers, attempts)
+#        ad5m-handoff on       enable: set the U-Boot variable init=/sbin/ad5m-init and the
+#                              enable marker; the NEXT boot starts Kiln OS
+#        ad5m-handoff stock    boot stock from now on (marker only; the U-Boot variable
+#                              stays, ad5m-init just starts stock's /init). Undo: "on"
+#        ad5m-handoff off      the hard way back: init=/init in the U-Boot environment and
+#                              no enable marker. Stock boots even if ad5m-init is damaged
+#
+# From Kiln OS the stock root is at /mnt/orig_root (ad5m-init puts it there).
+: "${AD5M_DATA:=/data}"
+HAND=$AD5M_DATA/ad5x/handoff
+ROOT=$AD5M_DATA/ad5x/os/root
+HOOK=/sbin/ad5m-init
+[ -x /mnt/orig_root$HOOK ] && STOCKHOOK=/mnt/orig_root$HOOK || STOCKHOOK=$HOOK
+
+die() { echo "ad5m-handoff: $*" >&2; exit 1; }
+env_get() { fw_printenv -n "$1" 2>/dev/null; }
+env_set() {
+	fw_setenv "$1" "$2" || die "fw_setenv $1 failed"
+	[ "$(env_get "$1")" = "$2" ] || die "$1 does not read back as '$2': stop here and run: ad5m-handoff status"
+}
+
+case "$1" in
+status)
+	echo "init=$(env_get init)  mmc_root=$(env_get mmc_root)"
+	echo "hook_installed=$([ -x "$STOCKHOOK" ] && echo yes || echo no) ($STOCKHOOK)"
+	echo "kiln_root=$([ -x "$ROOT/sbin/init" ] && echo yes || echo no) ($ROOT)"
+	for f in enable stock disabled-after-failures; do
+		[ -e "$HAND/$f" ] && echo "marker: $f"
+	done
+	echo "attempts=$(cat "$HAND/attempts" 2>/dev/null || echo 0)"
+	;;
+on)
+	command -v fw_setenv >/dev/null || die "no fw_setenv"
+	[ -x "$STOCKHOOK" ] || die "$STOCKHOOK is missing: install it on the stock root first (tools/install/ad5m-install.sh)"
+	[ -x "$ROOT/sbin/init" ] || die "no Kiln root at $ROOT"
+	[ -s /etc/fw_env.config ] || [ -s /mnt/orig_root/etc/fw_env.config ] || die "no /etc/fw_env.config"
+	mkdir -p "$HAND" || die "can't create $HAND"
+	rm -f "$HAND/stock" "$HAND/disabled-after-failures" "$HAND/attempts"
+	: > "$HAND/enable" && sync
+	[ "$(env_get init)" = "$HOOK" ] || env_set init "$HOOK"
+	echo "ad5m-handoff: on. The next boot starts Kiln OS; stock comes back after 3 failed tries."
+	;;
+stock)
+	mkdir -p "$HAND" && : > "$HAND/stock" && sync
+	echo "ad5m-handoff: stock from the next boot (remove $HAND/stock or run 'on' to return)"
+	;;
+off)
+	command -v fw_setenv >/dev/null || die "no fw_setenv"
+	rm -f "$HAND/enable" "$HAND/attempts"
+	env_set init /init
+	echo "ad5m-handoff: off. init=/init: the next boot starts stock directly."
+	;;
+*)
+	sed -n '2,/^# From Kiln/p' "$0"; exit 2 ;;
+esac

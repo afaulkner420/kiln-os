@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The buzzer: a PWM output of pwmchip0 (Adventurer 5M). WORK IN PROGRESS, NOT TESTED.
+# Measured: pwmchip0 has 8 channels; the AD5M audio library uses channel 6 (/etc/kiln-board
+# BUZZER_PWM). Exports it, lets user klipper drive it and writes /run/ad5x-sound.conf, which
+# ad5x-sound and Klipper's ad5x_sound read (both unchanged from the AD5X).
+. /usr/lib/ad5x/board.sh
+umask 022
+CHIP=/sys/class/pwm/$(board_get PWM_CHIP)
+CH=$(board_get BUZZER_PWM)
+CONF=/run/ad5x-sound.conf
+case "$1" in
+start)
+	rm -f $CONF
+	[ -d "$CHIP" ] && [ -n "$CH" ] || exit 0
+	[ -d $CHIP/pwm$CH ] || echo $CH > $CHIP/export 2>/dev/null
+	[ -d $CHIP/pwm$CH ] || { echo "ad5m-sound: can't export pwm$CH"; exit 0; }
+	echo 0 > $CHIP/pwm$CH/enable 2>/dev/null
+	chown klipper:klipper $CHIP/pwm$CH/period $CHIP/pwm$CH/duty_cycle $CHIP/pwm$CH/enable
+	mkdir -p /run/ad5x-sound; chown klipper:klipper /run/ad5x-sound
+	echo "PWM=$(basename $CHIP)/pwm$CH" > $CONF
+	;;
+stop)
+	[ -f $CHIP/pwm$CH/enable ] && echo 0 > $CHIP/pwm$CH/enable
+	;;
+esac
+exit 0

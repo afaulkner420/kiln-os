@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Wired network (Adventurer 5M): the MAC stock assigns (stock /etc/MAC, copied by ad5m-vendor),
+# then DHCP or a static address from /data/ad5x/network.conf (/usr/lib/ad5x/network.sh).
+# WORK IN PROGRESS, NOT TESTED.
+umask 022
+case "$1" in
+start)
+	mac=$(cat "$(ad5m-vendor dir)/stock/etc/MAC" 2>/dev/null)
+	[ -n "$mac" ] || mac=$(cat /mnt/orig_root/etc/MAC 2>/dev/null)
+	echo 1 > /proc/sys/net/ipv4/conf/default/ignore_routes_with_linkdown 2>/dev/null
+	echo 1 > /proc/sys/net/ipv4/conf/all/ignore_routes_with_linkdown 2>/dev/null
+	ifconfig eth0 down
+	[ -n "$mac" ] && ifconfig eth0 hw ether "$mac"
+	ifconfig eth0 up
+	. /usr/lib/ad5x/network.sh
+	net_up eth0
+	;;
+stop)
+	[ -f /var/run/udhcpc.eth0.pid ] && kill "$(cat /var/run/udhcpc.eth0.pid)"
+	;;
+esac
+exit 0

@@ -1,0 +1,47 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Wi-Fi client on wlan0 (Adventurer 5M, RTL8821CU out-of-tree driver). WORK IN PROGRESS, NOT TESTED.
+# Much simpler than S42ad5x-wifi: wpa_supplicant with /data/ad5x/wpa_supplicant.conf (the
+# screen can scan, join and save networks there), DHCP through network.sh. The first start
+# brings over the networks stock saved (copied by ad5m-vendor). TODO: the rest of
+# S42ad5x-wifi (retries, power-save off, rfkill, wifi.log, the wpa_cli hook).
+# The driver registers with cfg80211 and WEXT (the stock kernel has no mac80211); which of
+# nl80211 or wext the 8821cu really works with is UNVERIFIED: both are tried, nl80211 first.
+umask 022
+CONF=/data/ad5x/wpa_supplicant.conf
+CTRL=/var/run/wpa_supplicant
+LOG=/data/ad5x/printer_data/logs/wifi.log
+log() { echo "ad5m-wifi: $*"; echo "$(date '+%F %T') $*" >> $LOG 2>/dev/null; }
+case "$1" in
+start)
+	[ -e /data/ad5x/wifi.disable ] && { log "wifi.disable: Wi-Fi off"; exit 0; }
+	for i in 1 2 3 4 5 6 7 8 9 10; do [ -d /sys/class/net/wlan0 ] && break; sleep 1; done
+	[ -d /sys/class/net/wlan0 ] || { log "no wlan0 (driver not loaded?)"; exit 0; }
+	if [ ! -f $CONF ]; then
+		nets=
+		for f in "$(ad5m-vendor dir)"/stock/wifi/*; do
+			[ -f "$f" ] || continue
+			nets=$(sed -n '/^[[:space:]]*network[[:space:]]*=/,$p' "$f")
+			[ -n "$nets" ] && break
+		done
+		( umask 077
+		  { echo "# Wi-Fi networks (the screen saves here)"
+		    echo "ctrl_interface=$CTRL"
+		    echo "update_config=1"
+		    [ -n "$nets" ] && printf '\n%s\n' "$nets"
+		  } > $CONF.tmp && mv $CONF.tmp $CONF )
+		log "new $CONF$([ -n "$nets" ] && echo " with stock's saved networks")"
+	fi
+	chmod 600 $CONF
+	ip link set wlan0 up 2>/dev/null || ifconfig wlan0 up
+	( umask 077; wpa_supplicant -B -i wlan0 -D nl80211,wext -c $CONF ) || { log "wpa_supplicant failed"; exit 0; }
+	iw dev wlan0 set power_save off 2>/dev/null
+	. /usr/lib/ad5x/network.sh
+	net_up wlan0
+	;;
+stop)
+	killall wpa_supplicant 2>/dev/null
+	[ -f /var/run/udhcpc.wlan0.pid ] && kill "$(cat /var/run/udhcpc.wlan0.pid)"
+	;;
+esac
+exit 0

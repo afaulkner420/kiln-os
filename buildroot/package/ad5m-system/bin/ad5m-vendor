@@ -1,0 +1,99 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Vendor files: what Kiln OS needs from the printer's own stock system and must not
+# carry in its images (Flashforge/Allwinner files). They are copied from the stock
+# root (mounted read-only at /mnt/orig_root, or any stock root tree) into
+# /data/ad5x/vendor on the printer's own data partition. WORK IN PROGRESS, NOT TESTED.
+#
+# usage: ad5m-vendor status             vendor=ok|missing|damaged, dir=
+#        ad5m-vendor verify             check SHA256SUMS (exit 1 if not ok)
+#        ad5m-vendor populate [ROOT]    copy from ROOT (default /mnt/orig_root, else /)
+#        ad5m-vendor ensure             verify; if not ok, populate from the default sources
+#        ad5m-vendor dir                print the directory
+#
+# Layout of /data/ad5x/vendor:
+#   modules/<kernel>/8821cu.ko    Wi-Fi driver (RTL8821CU), built for the stock kernel
+#   stock/etc/MAC                 the MAC address stock assigns to eth0
+#   stock/wifi/*.conf             the Wi-Fi networks saved on stock (read at first start)
+#   stock/mcu/                    stock's board firmware images, run.sh and flashers, kept
+#                                 only so "restore to stock" can run stock's own run.sh
+#   MANIFEST, SHA256SUMS
+# The kernel: stock's uImage and sunxi.dtb stay on the FAT partition (p1) and are never
+# touched; the stock modules are only valid for that kernel (vermagic is recorded).
+: "${AD5M_DATA:=/data}"
+V=$AD5M_DATA/ad5x/vendor
+KVER=${AD5M_KVER:-$(uname -r)}
+
+say() { echo "ad5m-vendor: $*"; }
+die() { echo "ad5m-vendor: $*" >&2; exit 1; }
+
+# What a usable set must hold
+NEED="modules/$KVER/8821cu.ko stock/etc/MAC"
+
+verify() {
+	d=${1:-$V}
+	[ -f "$d/SHA256SUMS" ] || return 1
+	for n in $NEED; do grep -q "  $n\$" "$d/SHA256SUMS" || return 1; done
+	( cd "$d" && sha256sum -c SHA256SUMS >/dev/null 2>&1 )
+}
+
+copy_from() {	# ROOT
+	r=$1
+	[ -f "$r/lib/modules/$KVER/8821cu.ko" ] || { say "no $r/lib/modules/$KVER/8821cu.ko (is it the stock root, and the same kernel?)"; return 1; }
+	[ -f "$r/etc/MAC" ] || { say "no $r/etc/MAC"; return 1; }
+	new=$V.new
+	rm -rf "$new"; mkdir -p "$new/modules/$KVER" "$new/stock/etc" "$new/stock/wifi" "$new/stock/mcu" || return 1
+	cp "$r/lib/modules/$KVER/8821cu.ko" "$new/modules/$KVER/" || return 1
+	cp "$r/etc/MAC" "$new/stock/etc/MAC" || return 1
+	# saved Wi-Fi networks (names are only used at the first start; never logged)
+	for f in etc/wpa_supplicant.conf etc/wifi/wpa_supplicant.conf; do
+		[ -f "$r/$f" ] && cp "$r/$f" "$new/stock/wifi/$(echo "$f" | tr / _)"
+	done
+	chmod 600 "$new"/stock/wifi/* 2>/dev/null
+	# stock's board firmware and its own run.sh (restore to stock runs it from the stock root)
+	for c in "$r"/opt/PROGRAM/control/[0-9]*; do
+		[ -d "$c" ] || continue
+		mkdir -p "$new/stock/mcu/${c##*/}"
+		for f in "$c"/*; do
+			[ -f "$f" ] && cp "$f" "$new/stock/mcu/${c##*/}/"
+		done
+	done
+	{
+		echo "source=$r"
+		echo "date=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+		echo "kernel=$KVER"
+		echo "vermagic=$(tr '\0' '\n' < "$new/modules/$KVER/8821cu.ko" 2>/dev/null | sed -n 's/^vermagic=//p' | head -n 1)"
+		echo "note=Flashforge/Realtek files copied from this printer's own firmware; not part of Kiln OS releases"
+	} > "$new/MANIFEST"
+	( cd "$new" && find . -type f ! -name SHA256SUMS ! -name MANIFEST | sed 's#^\./##' | sort | xargs sha256sum > SHA256SUMS ) || return 1
+	verify "$new" || { rm -rf "$new"; say "the copy failed its own check"; return 1; }
+	rm -rf "$V.old"; [ -d "$V" ] && mv "$V" "$V.old"
+	mv "$new" "$V" && rm -rf "$V.old" && sync
+	say "populated $V from $r"
+}
+
+default_sources() {
+	[ -f /mnt/orig_root/etc/MAC ] && echo /mnt/orig_root
+	[ -f /etc/MAC ] && [ -d /opt/PROGRAM ] && echo /
+}
+
+case "$1" in
+status)
+	if [ ! -d "$V" ]; then echo "vendor=missing"
+	elif verify; then echo "vendor=ok"
+	else echo "vendor=damaged"; fi
+	echo "dir=$V"
+	;;
+verify) verify ;;
+populate)
+	if [ -n "$2" ]; then copy_from "$2"; else
+		for s in $(default_sources); do copy_from "$s" && exit 0; done
+		die "no stock root found (is /mnt/orig_root mounted?)"
+	fi ;;
+ensure)
+	verify && { say "ok"; exit 0; }
+	for s in $(default_sources); do copy_from "$s" && exit 0; done
+	die "vendor files missing and no stock root to copy from" ;;
+dir) echo "$V" ;;
+*) sed -n '2,/^# The kernel/p' "$0"; exit 2 ;;
+esac

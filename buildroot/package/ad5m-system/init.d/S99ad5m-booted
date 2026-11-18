@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Kiln OS has finished starting: clear the hand-over's try counter (sbin/ad5m-init), so the
+# next boot is not counted as another failed try. WORK IN PROGRESS, NOT TESTED.
+# "Finished" means: the data partition is mounted, the network and Klipper's start were
+# attempted. It does not wait for Klipper to be healthy: a printer whose Klipper fails
+# still boots, and stock is only the fallback for a Kiln OS that does not get this far.
+case "$1" in
+start)
+	if [ -d /data/ad5x/handoff ]; then
+		rm -f /data/ad5x/handoff/attempts
+		sync
+		echo "ad5m-booted: hand-over counter cleared"
+	fi
+	;;
+esac
+exit 0

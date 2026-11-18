@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Display backlight on (Adventurer 5M). WORK IN PROGRESS, NOT TESTED.
+# The panel is /dev/fb0 800x480 (driven by the stock kernel's Allwinner display driver); its
+# backlight has no sysfs class: ad5m-backlight uses the /dev/disp ioctls. GuppyScreen takes
+# the screen over. TODO: boot logo into /dev/fb0 (ad5x-fb-show needs PIL; check the image
+# size budget), and a board heartbeat if one turns out to be needed (the AD5X toggles PC11;
+# nothing like it was seen on the AD5M).
+case "$1" in
+start)
+	for i in 1 2 3 4 5; do [ -e /dev/disp ] && break; sleep 1; done
+	if [ -e /dev/disp ]; then
+		ad5m-backlight 80% >/dev/null 2>&1 || echo "ad5m-board: backlight ioctl failed"
+	else
+		echo "ad5m-board: no /dev/disp: no backlight control"
+	fi
+	;;
+esac
+exit 0

@@ -1,0 +1,132 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# ad5m-init: PID 1 hand-over from the stock system to Kiln OS (Adventurer 5M).
+# WORK IN PROGRESS, NOT TESTED ON A PRINTER (docs/ad5m-boot.md).
+#
+# How it runs: U-Boot builds the kernel command line with init=${init}
+# (measured: env variable "init", default /init) and root=${mmc_root}
+# (/dev/mmcblk0p6, the stock root, mounted read-only). "fw_setenv init
+# /sbin/ad5m-init" makes the kernel start THIS file as PID 1, from the stock
+# root. It then either
+#   - enters the Kiln OS root kept as a plain directory tree on the data
+#     partition (/data/ad5x/os/root: the stock kernel has no loop devices and
+#     no squashfs), with the stock root kept mounted read-only at
+#     /mnt/orig_root, and runs Kiln's init; or
+#   - runs stock's own /init, as if this file did not exist.
+# The stock root is never written. "fw_setenv init /init" undoes the hook.
+#
+# Stock wins (and Kiln does not start) when:
+#   - /data/ad5x/handoff/enable is missing (nothing enabled it);
+#   - /data/ad5x/handoff/stock exists (the user asked for one stock boot or
+#     for stock until removed: ad5m-handoff stock);
+#   - there is no Kiln root, or it has no /sbin/init;
+#   - the last boots of Kiln never completed (S99ad5m-booted clears the
+#     counter): after 3 tries "enable" is renamed to "disabled-after-failures";
+#   - anything in the hand-over itself fails before the point of no return.
+#
+# Test overrides (never set on a printer): AD5M_DRY=1 prints what would run
+# instead of doing it; AD5M_DATA, AD5M_DEVDATA, AD5M_STOCK_INIT.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+DATA=${AD5M_DATA:-/data}
+DEVDATA=${AD5M_DEVDATA:-/dev/mmcblk0p7}
+STOCK_INIT=${AD5M_STOCK_INIT:-/init}
+HAND=$DATA/ad5x/handoff
+ROOT=$DATA/ad5x/os/root
+MAX_TRIES=3
+
+say() {
+	echo "ad5m-init: $*"
+	[ -w /dev/console ] && echo "ad5m-init: $*" > /dev/console 2>/dev/null
+	return 0
+}
+run() {
+	if [ -n "$AD5M_DRY" ]; then echo "DRY: $*"; return 0; fi
+	"$@"
+}
+
+# Undo what this script mounted (stock's own start-up mounts them again), then
+# become stock's init. Never returns, except in a dry run.
+stock() {
+	say "booting stock: $*"
+	run umount "$DATA" 2>/dev/null
+	if [ -z "$MOUNTED_PROC" ]; then :; else run umount /proc 2>/dev/null; fi
+	if [ -z "$MOUNTED_SYS" ]; then :; else run umount /sys 2>/dev/null; fi
+	if [ -z "$MOUNTED_DEV" ]; then :; else run umount /dev 2>/dev/null; fi
+	if [ -n "$AD5M_DRY" ]; then echo "DRY: exec $STOCK_INIT"; exit 0; fi
+	exec "$STOCK_INIT"
+	# exec failed: nothing sensible is left, try the kernel's own fallbacks
+	exec /sbin/init
+}
+
+MOUNTED_PROC= MOUNTED_SYS= MOUNTED_DEV=
+if [ -z "$AD5M_DRY" ]; then
+	[ -d /proc/self ] || { run mount -t proc proc /proc && MOUNTED_PROC=1; }
+	[ -d /sys/kernel ] || { run mount -t sysfs sysfs /sys && MOUNTED_SYS=1; }
+	# the stock kernel has CONFIG_DEVTMPFS but not DEVTMPFS_MOUNT (measured): if the data
+	# partition's node is not in /dev yet, mount devtmpfs (stock's own start-up mounts it again)
+	[ -b "$DEVDATA" ] || { run mount -t devtmpfs devtmpfs /dev 2>/dev/null && MOUNTED_DEV=1; }
+fi
+
+# The data partition: the stock root is read-only here, the data partition is
+# the only place anything is written.
+if [ -z "$AD5M_DRY" ]; then
+	mkdir -p "$DATA" 2>/dev/null
+	grep -q " $DATA " /proc/mounts 2>/dev/null ||
+		run mount -t ext4 -o rw "$DEVDATA" "$DATA" ||
+		stock "can't mount $DEVDATA"
+fi
+
+[ -f "$HAND/enable" ] || stock "not enabled ($HAND/enable)"
+[ ! -e "$HAND/stock" ] || stock "stock requested ($HAND/stock)"
+[ -x "$ROOT/sbin/init" ] || stock "no Kiln root at $ROOT"
+
+n=$(cat "$HAND/attempts" 2>/dev/null)
+case "$n" in ''|*[!0-9]*) n=0 ;; esac
+n=$((n + 1))
+if [ "$n" -gt "$MAX_TRIES" ]; then
+	run mv "$HAND/enable" "$HAND/disabled-after-failures" 2>/dev/null
+	run rm -f "$HAND/attempts"
+	sync
+	stock "Kiln OS did not finish booting $MAX_TRIES times; disabled"
+fi
+echo "$n" > "$HAND/attempts" && sync || stock "can't record the attempt"
+say "starting Kiln OS (try $n of $MAX_TRIES)"
+
+# The new root must be a mount point: bind the directory onto itself.
+run mount --bind "$ROOT" "$ROOT" || stock "bind mount failed"
+for d in mnt/orig_root proc sys dev run tmp data; do
+	[ -d "$ROOT/$d" ] || mkdir -p "$ROOT/$d" 2>/dev/null
+done
+
+# Point of no return: after pivot_root the stock root is under /mnt/orig_root.
+# If pivot_root itself fails nothing has moved: stock still boots.
+if [ -z "$AD5M_DRY" ]; then
+	cd "$ROOT" || stock "can't enter $ROOT"
+	run pivot_root . mnt/orig_root || stock "pivot_root failed"
+	cd /
+else
+	echo "DRY: cd $ROOT; pivot_root . mnt/orig_root"
+fi
+
+# Carry the running mounts across; if one can't be moved, mount a fresh one.
+mv_or() {	# SRC DEST FALLBACK-ARGS...
+	src=$1 dest=$2; shift 2
+	run mount --move "/mnt/orig_root$src" "$dest" 2>/dev/null ||
+		run mount -o move "/mnt/orig_root$src" "$dest" 2>/dev/null ||
+		{ [ $# -gt 0 ] && run mount "$@" "$dest"; }
+}
+mv_or /proc /proc -t proc proc
+mv_or /sys /sys -t sysfs sysfs
+mv_or /dev /dev -t devtmpfs devtmpfs
+mv_or "$DATA" /data -t ext4 "$DEVDATA"
+
+# Kiln's own init (BusyBox init, /etc/inittab of the Kiln image). The stock
+# root stays mounted read-only at /mnt/orig_root for the vendor files.
+if [ -n "$AD5M_DRY" ]; then echo "DRY: exec /sbin/init"; exit 0; fi
+exec /sbin/init
+# Not reached unless exec failed: leave a shell on the console rather than a panic.
+say "exec /sbin/init failed"
+exec /bin/sh

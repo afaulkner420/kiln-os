@@ -1,0 +1,33 @@
+# Board profile read by the shared Kiln OS scripts (WORK IN PROGRESS).
+# Every value marked MEASURED was read from a real unit on 2026-11-17.
+BOARD=ad5m
+# ad5m or ad5m-pro, set by the installer from the stock machine type
+# (Adventurer5M / Adventurer5MPro, USB PID 0023 / 0024: AD5M mod's installer)
+MODEL=ad5m
+SOC=sun8iw20
+KERNEL_ABI=5.4.61
+# Serial ports (MEASURED: present; roles from the AD5M mod's configs)
+MAINBOARD_TTY=/dev/ttyS5
+EBOARD_TTY=/dev/ttyS1
+CONSOLE_TTY=/dev/ttyS3
+MCU_BAUD=230400
+# MCU boot / reset lines: sysfs GPIO numbers. UNKNOWN. Stock exports gpio 205 (out,
+# high) and 206 (out, low) and its NationsCommand / IAPCommand toggle GPIO through
+# /sys/class/gpio, but which is BOOT0 and which is NRST is not confirmed.
+MCU_BOOT0_GPIO=
+MCU_NRST_GPIO=
+# Eboard: 64 KiB bootloader, application at 0x08010000; mainboard application at 0x08000000
+EBOARD_APP_ADDRESS=0x08010000
+MAINBOARD_APP_ADDRESS=0x08000000
+# Storage (MEASURED): eMMC mmcblk0; p1 boot-resource FAT (uImage, sunxi.dtb), p2 env, p3 env-redund,
+# p4 boot, p5 dsp0, p6 rootfs (stock, ext4 1280 MiB), p7 UDISK (/data)
+STORAGE=/dev/mmcblk0
+STOCK_ROOT=/dev/mmcblk0p6
+DATA_PART=/dev/mmcblk0p7
+BOOT_FAT_PART=/dev/mmcblk0p1
+# Display / touch / sound (MEASURED)
+FRAMEBUFFER=/dev/fb0
+FB_RES=800x480
+TOUCH_EVENT=/dev/input/event0
+PWM_CHIP=pwmchip0
+BUZZER_PWM=6
