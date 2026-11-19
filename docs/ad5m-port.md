@@ -20,13 +20,23 @@ Not built, not run on a printer. Facts marked MEASURED were read from a real AD5
 ## What is in this change
 
 - `klipper/ad5m.cfg`, `ad5m-pro.cfg`, `printer-ad5m.cfg`: hardware config ported to mainline syntax
-  from the AD5M mod's config. Every uncertain value is marked `TODO:`.
+  from the AD5M mod's config (its PID, input shaper, rotation distance and probe offset included as
+  starting values from one unit). Every uncertain value is marked `TODO:`.
 - `klipper/mcu-configs/ad5m-{mainboard,eboard}.mainline.config`: the AD5X ones with a note. The AD5M
   mod's mainboard config differs only by the load cell and TVOC bridge options.
 - `buildroot/configs/ad5m_defconfig`: ARM target on the stock 5.4 kernel, ext4 root, GuppyScreen.
   Needs `package/ad5m-system` and `package/guppyscreen`, which do not exist yet.
 - `buildroot/board/ad5m/rootfs-overlay/etc/kiln-board`: board profile (ports, partitions, display) for
   the shared scripts, with the unknowns left blank (MCU boot/reset GPIO numbers).
+
+## Also in this change (third batch)
+
+- `klipper/ad5m-macros.cfg`: START_PRINT / PRINT_START, END_PRINT / PRINT_END, CANCEL_PRINT, PAUSE / RESUME with
+  a park spot, M600, M24/M25, filament load/unload/purge, AUTO_BED_LEVEL and BED_MESH_CALIBRATE with a tare, and
+  Kiln's `[ad5x_sound]` and `[ad5x_log]` modules (board-independent). Checked by parsing every macro in Klipper's
+  template syntax and rendering the main ones against a mock printer object (parameters, branches, the pause
+  clamp, the tare refusal); not run in Klipper.
+- `klipper/ad5m-loadcell.cfg`: the two sections that load the load cell module once it exists.
 
 ## Also in this change (second batch)
 
@@ -42,7 +52,13 @@ Not built, not run on a printer. Facts marked MEASURED were read from a real AD5
 1. `package/guppyscreen` and the setup wizard panels.
 2. AD5M macros layer (print start, prime line, quick actions) and `setup.cfg`.
 3. Mainline MCU firmware images for the AD5M and `tools/build_mcu.sh` support; confirm the reset/boot GPIO lines.
-4. Load cell and TVOC support (a mainboard MCU patch; not on the Z probing path).
+4. **Load cell support, which printing needs.** The probe's trigger (PB4) comes from the load cell board
+   and stock and the AD5M mod tare it over its UART before every probe or mesh (`FLASHFORGE_LOAD_CELL_TARE`,
+   board command H1, bridged by the mainboard MCU). Mainline Klipper has no such module, so without it the
+   bed cannot be probed safely: `LOAD_CELL_TARE` in `ad5m-macros.cfg` refuses with an error instead. Needs
+   a mainboard MCU patch (`flashforge_load_cell.c`, Kconfig/Makefile hunks) and the host module
+   `flashforge_loadcell.py` from xblax's fork (GPL-3.0, in the second download), then
+   `klipper/ad5m-loadcell.cfg`. The TVOC sensor (Pro) is the same kind of bridge and not on the print path.
 5. Review of the shared services not yet reused (camera, Fluidd defaults, update agent, plugin boot).
 6. Milestone 2 (A/B root through `fw_setenv mmc_root`) and a RAM recovery (needs an own kernel).
 
