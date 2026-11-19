@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# Start all init scripts in /etc/init.d in numerical order (Buildroot's rcS), Adventurer 5M.
+# WORK IN PROGRESS. The AD5X's rcS (board/ad5x/rootfs-overlay) also keeps a boot trace in the
+# eMMC's ota partition (ad5x-bootlog) and needs its slot scheme: not here. This one keeps the
+# trace in /run/ad5x-boot.log only (read it with: cat /run/ad5x-boot.log).
+
+# The services' files are readable by klipper and www-data (issue #31 on the AD5X): the
+# kernel's 022, stated here. Kiln's own scripts set it too.
+umask 022
+
+: > /run/ad5x-boot.log 2>/dev/null
+trace() { read -r up _ < /proc/uptime; echo "$up $*" >> /run/ad5x-boot.log; }
+trace "rcS start $(cat /etc/ad5x-release 2>/dev/null)"
+
+for i in /etc/init.d/S??*; do
+	# Ignore dangling symlinks (if any).
+	[ ! -f "$i" ] && continue
+
+	trace "start ${i##*/}"
+	case "$i" in
+		*.sh)
+			# Source shell script for speed.
+			(
+				trap - INT QUIT TSTP
+				set start
+				# shellcheck source=/dev/null
+				. "$i"
+			)
+			;;
+		*)
+			# No sh extension, so fork subprocess.
+			"$i" start
+			;;
+	esac
+	trace "end ${i##*/} rc=$?"
+done
+trace "rcS done"

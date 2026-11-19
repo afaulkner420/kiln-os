@@ -1,0 +1,3 @@
+# Klipper runs as its own user; dialout for the board UARTs (udev).
+# Fixed ids, as on the AD5X: files in /data carry them across updates.
+klipper 101 klipper 103 * /home/klipper /bin/sh dialout,tty Klipper

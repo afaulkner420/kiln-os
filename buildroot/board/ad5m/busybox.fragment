@@ -1,0 +1,8 @@
+# Main OS BusyBox additions (on top of Buildroot's default config), Adventurer 5M
+# ionice: the timelapse plugin zips and renders at idle I/O priority, so its eMMC
+# writes don't starve Klipper (as on the AD5X, issue #40)
+CONFIG_IONICE=y
+# ad5m-init and ad5m-install use these on the stock side too, but stock's BusyBox is
+# stock's: here we only need them for the Kiln root's own tools
+CONFIG_PIVOT_ROOT=y
+CONFIG_FEATURE_MOUNT_FLAGS=y

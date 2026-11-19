@@ -29,6 +29,26 @@ Not built, not run on a printer. Facts marked MEASURED were read from a real AD5
 - `buildroot/board/ad5m/rootfs-overlay/etc/kiln-board`: board profile (ports, partitions, display) for
   the shared scripts, with the unknowns left blank (MCU boot/reset GPIO numbers).
 
+## Also in this change (fourth batch: building it)
+
+- `tools/ad5m-build-all.sh`: one script that does everything in WSL2/Linux: preflight, host packages, copies the
+  checkout off a Windows drive, wires the package into Buildroot's menu, clones Buildroot 2026.02.3, builds the
+  boards' firmware and the root image, collects `rootfs.tar`, the firmware and the installer into `dist/`.
+  Stops at the first problem with the step name and the log; start it again to carry on.
+- `tools/build_mcu_ad5m.sh`, `tools/ad5m_mcu_apply.py`, `klipper/mcu-sources/ad5m/`, `klipper/extras/flashforge_*.py`:
+  mainline Klipper plus xblax's load cell and TVOC bridges (GPL-3.0, copied unchanged with a provenance header).
+  The apply script edits Klipper's Kconfig and Makefile by anchors, not line numbers; tested against the fork's own
+  files rebuilt without the bridges (identical result, and a second run changes nothing).
+- `buildroot/board/ad5m/`: BusyBox fragment, users, post-build/post-image scripts, an rcS without the AD5X's slot
+  trace, and the overlay; `ad5m_defconfig` uses the AD5X overlay (nginx, chrony, sudoers, udev rules, dropbear)
+  plus this one. `ad5m-system.mk` installs the AD5M's Klipper configs over the AD5X defaults the Klipper package
+  leaves in the image.
+- Checked here: Buildroot's own configuration step on `ad5m_defconfig` with Kiln's external tree (using the
+  Buildroot 2025.02.4 copy from the second download, the only one available offline: its upstream
+  `python-inotify-simple` clashes with Kiln's and was hidden in the test copy), the options that must stick, the
+  package recipe parsing and its dependencies, and the package's install commands against a fake target
+  directory (every shared file it copies exists). Not checked: any compile or download.
+
 ## Also in this change (third batch)
 
 - `klipper/ad5m-macros.cfg`: START_PRINT / PRINT_START, END_PRINT / PRINT_END, CANCEL_PRINT, PAUSE / RESUME with
@@ -51,14 +71,13 @@ Not built, not run on a printer. Facts marked MEASURED were read from a real AD5
 
 1. `package/guppyscreen` and the setup wizard panels.
 2. AD5M macros layer (print start, prime line, quick actions) and `setup.cfg`.
-3. Mainline MCU firmware images for the AD5M and `tools/build_mcu.sh` support; confirm the reset/boot GPIO lines.
+3. Build the MCU firmware for the AD5M (`tools/build_mcu_ad5m.sh`: untested, the load cell C code may need changes for the newer Klipper) and confirm the reset/boot GPIO lines.
 4. **Load cell support, which printing needs.** The probe's trigger (PB4) comes from the load cell board
    and stock and the AD5M mod tare it over its UART before every probe or mesh (`FLASHFORGE_LOAD_CELL_TARE`,
    board command H1, bridged by the mainboard MCU). Mainline Klipper has no such module, so without it the
-   bed cannot be probed safely: `LOAD_CELL_TARE` in `ad5m-macros.cfg` refuses with an error instead. Needs
-   a mainboard MCU patch (`flashforge_load_cell.c`, Kconfig/Makefile hunks) and the host module
-   `flashforge_loadcell.py` from xblax's fork (GPL-3.0, in the second download), then
-   `klipper/ad5m-loadcell.cfg`. The TVOC sensor (Pro) is the same kind of bridge and not on the print path.
+   bed cannot be probed safely: `LOAD_CELL_TARE` in `ad5m-macros.cfg` refuses with an error instead. The bridge sources and the host module are now in this tree (`klipper/mcu-sources/ad5m`,
+   `klipper/extras/flashforge_*.py`, applied by `tools/build_mcu_ad5m.sh`) but have never been compiled against
+   Kiln's Klipper revision; once built and flashed, include `klipper/ad5m-loadcell.cfg` from printer.cfg. The TVOC sensor (Pro) is the same kind of bridge and not on the print path.
 5. Review of the shared services not yet reused (camera, Fluidd defaults, update agent, plugin boot).
 6. Milestone 2 (A/B root through `fw_setenv mmc_root`) and a RAM recovery (needs an own kernel).
 

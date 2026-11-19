@@ -15,8 +15,9 @@ BR2_TOOLCHAIN_BUILDROOT_CXX=y
 BR2_KERNEL_HEADERS_5_4=y
 
 BR2_DL_DIR="$(BR2_EXTERNAL_AD5X_PATH)/dl"
-# Fixes to Buildroot's own packages: board/ad5m/patches/<package>/
-BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/patches"
+
+# AD5X patches (python-serial, ustreamer) apply here too; AD5M-only ones go in board/ad5m/patches/
+BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5x/patches $(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/patches"
 
 # System. The stock kernel has no cgroups, so no systemd: BusyBox init, as stock.
 BR2_TARGET_GENERIC_HOSTNAME="ad5m"
@@ -35,7 +36,10 @@ BR2_TARGET_GENERIC_GETTY_PORT="ttyS3"
 BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
 BR2_TARGET_TZ_INFO=y
 BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/users.table"
-BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/rootfs-overlay"
+# The AD5X overlay first (nginx, chrony, sudoers, sysctl, udev rules, dropbear and udevd scripts:
+# nothing in it is specific to the AD5X except its rcS), then ours, which replaces rcS and
+# adds the board profile
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5x/rootfs-overlay $(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/rootfs-overlay"
 BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/post-build.sh"
 BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_AD5X_PATH)/board/ad5m/post-image.sh"
 

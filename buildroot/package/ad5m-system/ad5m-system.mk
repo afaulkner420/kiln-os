@@ -15,24 +15,43 @@ AD5M_SYSTEM_LICENSE = GPL-3.0
 AD5M_SYSTEM_PKGDIR = $(BR2_EXTERNAL_AD5X_PATH)/package/ad5m-system
 AD5M_SYSTEM_SHARED = $(BR2_EXTERNAL_AD5X_PATH)/package/ad5x-system
 AD5M_SYSTEM_TOOLS = $(BR2_EXTERNAL_AD5X_PATH)/../tools
-AD5M_SYSTEM_DEPENDENCIES = host-python3
+# klipper first: its package installs the AD5X's default configs, which this one replaces
+AD5M_SYSTEM_DEPENDENCIES = host-python3 klipper
+AD5M_SYSTEM_KLIPPER = $(BR2_EXTERNAL_AD5X_PATH)/../klipper
 
-# The boards' Klipper firmware this image is tested against: klipper/mcu-firmware/ad5m/
-# (VERSION, mainboard.bin, eboard.hex, SHA256SUMS), built by tools/build_mcu.sh for the
-# ad5m configs. TODO: that script and directory do not exist yet; without them the image
-# has no firmware and ad5m-mcu only starts the eboard.
-AD5M_SYSTEM_MCU_DIR = $(BR2_EXTERNAL_AD5X_PATH)/../klipper/mcu-firmware/ad5m
+# The boards' Klipper firmware this image is tested against, as Kiln does it for the AD5X:
+# klipper/mcu-dicts/FLASHED_AD5M names the version, klipper/mcu-firmware/<version>/ holds
+# mainboard.bin, eboard.hex and SHA256SUMS. tools/build_mcu_ad5m.sh builds them and writes
+# FLASHED_AD5M. Without that file the image has no firmware and ad5m-mcu only starts the eboard.
+AD5M_SYSTEM_MCU_VERSION = $(strip $(shell cat $(BR2_EXTERNAL_AD5X_PATH)/../klipper/mcu-dicts/FLASHED_AD5M 2>/dev/null))
+AD5M_SYSTEM_MCU_DIR = $(BR2_EXTERNAL_AD5X_PATH)/../klipper/mcu-firmware/$(AD5M_SYSTEM_MCU_VERSION)
 
 define AD5M_SYSTEM_INSTALL_MCU_FIRMWARE
-	if [ -f $(AD5M_SYSTEM_MCU_DIR)/VERSION ]; then \
+	if [ -n "$(AD5M_SYSTEM_MCU_VERSION)" ] && [ -d $(AD5M_SYSTEM_MCU_DIR) ]; then \
 		cd $(AD5M_SYSTEM_MCU_DIR) && sha256sum -c --quiet SHA256SUMS || exit 1; \
 		mkdir -p $(TARGET_DIR)/usr/share/ad5x/mcu; \
 		cp $(AD5M_SYSTEM_MCU_DIR)/mainboard.bin $(AD5M_SYSTEM_MCU_DIR)/eboard.hex \
-			$(AD5M_SYSTEM_MCU_DIR)/SHA256SUMS $(AD5M_SYSTEM_MCU_DIR)/VERSION \
-			$(TARGET_DIR)/usr/share/ad5x/mcu/; \
+			$(AD5M_SYSTEM_MCU_DIR)/SHA256SUMS $(TARGET_DIR)/usr/share/ad5x/mcu/; \
+		echo $(AD5M_SYSTEM_MCU_VERSION) > $(TARGET_DIR)/usr/share/ad5x/mcu/VERSION; \
 	else \
-		echo "ad5m-system: no MCU firmware in $(AD5M_SYSTEM_MCU_DIR): image without it"; \
+		echo "ad5m-system: no MCU firmware (klipper/mcu-dicts/FLASHED_AD5M): image without it"; \
 	fi
+endef
+
+# The printer's Klipper config: the AD5M's factory files, and the first-boot templates in place of
+# the AD5X's (klipper.mk installs those: printer.cfg includes ad5x.cfg, unit.cfg is read from
+# stock's AD5X settings, macros/*.cfg are the IFS and purge box ones)
+define AD5M_SYSTEM_INSTALL_CONFIG
+	for f in ad5m.cfg ad5m-pro.cfg ad5m-loadcell.cfg ad5m-macros.cfg; do \
+		$(INSTALL) -D -m 0644 $(AD5M_SYSTEM_KLIPPER)/$$f \
+			$(TARGET_DIR)/usr/share/ad5x/config/$$f || exit 1; \
+	done
+	$(INSTALL) -D -m 0644 $(AD5M_SYSTEM_KLIPPER)/printer-ad5m.cfg \
+		$(TARGET_DIR)/usr/share/ad5x/defaults/printer.cfg
+	$(INSTALL) -D -m 0644 $(AD5M_SYSTEM_KLIPPER)/local-ad5m.cfg \
+		$(TARGET_DIR)/usr/share/ad5x/defaults/local.cfg
+	rm -f $(TARGET_DIR)/usr/share/ad5x/defaults/unit.cfg
+	rm -rf $(TARGET_DIR)/usr/share/ad5x/defaults/macros
 endef
 
 define AD5M_SYSTEM_INSTALL_TARGET_CMDS
@@ -64,6 +83,7 @@ define AD5M_SYSTEM_INSTALL_TARGET_CMDS
 	for f in $(@D)/init.d/S*; do \
 		$(INSTALL) -D -m 0755 $$f $(TARGET_DIR)/etc/init.d/$$(basename $$f) || exit 1; \
 	done
+	$(AD5M_SYSTEM_INSTALL_CONFIG)
 	$(AD5M_SYSTEM_INSTALL_MCU_FIRMWARE)
 endef
 
