@@ -8,6 +8,16 @@
 # root /data/ad5x) and adds the AD5M ones. Needs BR2_PACKAGE_AD5X_SYSTEM's package
 # directory in the same external tree.
 
+# The AD5M keeps the stock 5.4.61 kernel, but the headers are 5.10 (see ad5m_defconfig) and
+# Buildroot passes the headers' version to glibc as its minimum kernel (--enable-kernel=5.10):
+# every program would stop with "FATAL: kernel too old" on 5.4.61. External makefiles are
+# included after glibc.mk, so this later option wins (configure keeps the last one).
+# Not applied to other boards. Anything the 5.10 headers know that a 5.4 kernel lacks is
+# probed at run time by glibc and Python (they fall back on ENOSYS).
+ifeq ($(BR2_PACKAGE_AD5M_SYSTEM),y)
+GLIBC_CONF_OPTS += --enable-kernel=5.4
+endif
+
 AD5M_SYSTEM_VERSION = 1
 AD5M_SYSTEM_SITE = $(BR2_EXTERNAL_AD5X_PATH)/package/ad5m-system
 AD5M_SYSTEM_SITE_METHOD = local

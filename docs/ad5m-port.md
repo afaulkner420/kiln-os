@@ -29,6 +29,17 @@ Not built, not run on a printer. Facts marked MEASURED were read from a real AD5
 - `buildroot/board/ad5m/rootfs-overlay/etc/kiln-board`: board profile (ports, partitions, display) for
   the shared scripts, with the unknowns left blank (MCU boot/reset GPIO numbers).
 
+## Kernel headers and glibc's minimum kernel (found when the first build ran)
+
+The AD5X's userland is built with 5.10 headers because its stock kernel is 5.10.186 (Kiln starts its own 6.6
+from it). The AD5M's stock kernel is 5.4.61, and Buildroot 2026.02 has dropped its 5.4 headers (legacy option),
+so `ad5m_defconfig` uses 5.10 headers. Buildroot passes the headers' version to glibc as its minimum kernel
+(`--enable-kernel`); a glibc that requires 5.10 stops every program on a 5.4.61 kernel with "FATAL: kernel too
+old". `ad5m-system.mk` therefore adds `--enable-kernel=5.4` for this board only (verified with Buildroot's own
+`printvars`: AD5M gets `5.10` then `5.4`, the later wins; the AD5X defconfig is unchanged), `ad5m-build-all.sh`
+refuses to build without it, and `post-build.sh` fails the build if BusyBox or Python's ELF ABI note asks for
+more than 5.4.61. Calls newer than 5.4 that the 5.10 headers expose are probed at run time by glibc/Python.
+
 ## Also in this change (fourth batch: building it)
 
 - `tools/ad5m-build-all.sh`: one script that does everything in WSL2/Linux: preflight, host packages, copies the

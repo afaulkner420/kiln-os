@@ -18,7 +18,9 @@
 #   --skip-image   don't build the root image (just the firmware)
 #   --jobs N       parallel jobs (default: all cores; fewer if it runs out of memory)
 #   --dry-run      print what would run, change nothing
-#   --clean        remove the image build directory first (a full rebuild, ~1 hour more)
+#   --clean        remove the image build directory first (a full rebuild, ~1 hour more).
+#                  Use it once after updating from a version that built glibc with the wrong
+#                  minimum kernel (headers 5.10 without the --enable-kernel=5.4 override).
 #
 # Steps: preflight -> apt -> sync -> wire -> buildroot -> mcu -> image -> collect
 # Output: <work>/dist/ad5m-<date>/  with rootfs.tar (+ .sha256), the MCU firmware, the installer
@@ -188,6 +190,12 @@ if [ -n "$DO_IMAGE" ]; then
 		for s in BR2_arm=y BR2_cortex_a7=y BR2_PACKAGE_KLIPPER=y BR2_PACKAGE_MOONRAKER=y BR2_PACKAGE_FLUIDD=y BR2_PACKAGE_UBOOT_TOOLS=y; do
 			grep -q "^$s\$" "$O/.config" || die "$s did not make it into the Buildroot config (a package or option this Buildroot does not have)"
 		done
+		# glibc must accept the printer's 5.4.61 kernel (ad5m-system.mk lowers --enable-kernel from the headers' 5.10)
+		gopts=$("${BR[@]}" -s printvars VARS=GLIBC_CONF_OPTS 2>/dev/null)
+		case "$gopts" in
+		*--enable-kernel=5.4*) note "glibc minimum kernel: 5.4 (the printer runs 5.4.61)" ;;
+		*) die "glibc would refuse to run on the printer's 5.4.61 kernel (no --enable-kernel=5.4 in GLIBC_CONF_OPTS: is BR2_PACKAGE_AD5M_SYSTEM enabled and the package wired in?)" ;;
+		esac
 		for s in BR2_PACKAGE_AD5M_SYSTEM BR2_PACKAGE_GUPPYSCREEN; do
 			grep -q "^$s=y\$" "$O/.config" || note "NOTE: $s is not enabled (the package is missing or not wired): the image will not have it"
 		done

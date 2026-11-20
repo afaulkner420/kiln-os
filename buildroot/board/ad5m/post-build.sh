@@ -11,6 +11,20 @@ set -e
 TARGET=$1
 REPO=$(cd "$BR2_EXTERNAL_AD5X_PATH/.." && pwd)
 
+# Guard: the printer's kernel is 5.4.61. Programs carry the oldest kernel they accept in their
+# ELF ABI note (glibc's --enable-kernel); more than 5.4.61 means "FATAL: kernel too old" at boot.
+READELF=$(ls "$HOST_DIR"/bin/*-readelf 2>/dev/null | head -n 1)
+[ -n "$READELF" ] || READELF=readelf
+for bin in bin/busybox usr/bin/python3; do
+	[ -e "$TARGET/$bin" ] || continue
+	abi=$("$READELF" -n "$TARGET/$bin" 2>/dev/null | sed -n 's/.*ABI: *\([0-9][0-9.]*\).*/\1/p' | head -n 1)
+	[ -n "$abi" ] || continue
+	if [ "$(printf '%s\n%s\n' "$abi" 5.4.61 | sort -V | tail -n 1)" != 5.4.61 ]; then
+		echo "post-build: $bin needs kernel $abi or newer, the printer runs 5.4.61 (glibc --enable-kernel: see ad5m-system.mk)" >&2
+		exit 1
+	fi
+done
+
 rm -f "$TARGET/etc/init.d/S50nginx" "$TARGET/etc/logrotate.d/nginx"
 rm -rf "$TARGET/usr/html"
 

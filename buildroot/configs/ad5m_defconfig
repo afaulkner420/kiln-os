@@ -9,10 +9,14 @@ BR2_arm=y
 BR2_cortex_a7=y
 BR2_ARM_FPU_NEON_VFPV4=y
 
-# Toolchain: glibc, headers for the stock 5.4 kernel (5.4.61, measured on a unit)
+# Toolchain: glibc. The printer runs the stock 5.4.61 kernel (measured), but Buildroot 2026.02 no
+# longer offers 5.4 headers (the option is legacy), so the oldest in-tree set, 5.10, is used for
+# compiling. Buildroot also makes glibc refuse to run on a kernel older than the headers
+# ("FATAL: kernel too old"): package/ad5m-system/ad5m-system.mk lowers that minimum back to
+# 5.4 for this board, and post-build.sh fails the build if any binary still needs more.
 BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
 BR2_TOOLCHAIN_BUILDROOT_CXX=y
-BR2_KERNEL_HEADERS_5_4=y
+BR2_KERNEL_HEADERS_5_10=y
 
 BR2_DL_DIR="$(BR2_EXTERNAL_AD5X_PATH)/dl"
 
