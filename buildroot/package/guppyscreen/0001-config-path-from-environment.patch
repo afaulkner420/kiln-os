@@ -1,0 +1,21 @@
+Read the GuppyScreen config path from GUPPY_CONFIG
+
+Kiln OS keeps the config on the writable data partition; the executable's directory is on the
+read-only root. Default behaviour (no variable) is unchanged.
+
+--- a/src/main.cpp	2026-11-20 08:39:36.400966475 +0000
++++ b/src/main.cpp	2026-11-20 08:39:36.418100716 +0000
+@@ -66,7 +66,12 @@
+     spdlog::debug("current path {}", std::string(fs::canonical("/proc/self/exe").parent_path()));
+ 
+     Config* conf = Config::get_instance();
+-    auto config_path = fs::canonical("/proc/self/exe").parent_path() / "guppyconfig.json";
++    // Kiln OS: the root filesystem is read-only, so the config (and the themes next to it) lives
++    // on /data; S80guppyscreen sets GUPPY_CONFIG. Without it: next to the executable, as before.
++    const char *config_env = getenv("GUPPY_CONFIG");
++    auto config_path = (config_env && *config_env)
++        ? fs::path(config_env)
++        : fs::canonical("/proc/self/exe").parent_path() / "guppyconfig.json";
+     conf->init(config_path.string(), "/usr/data/printer_data/thumbnails");
+ 
+     GuppyScreen::init(hal_init);

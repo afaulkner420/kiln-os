@@ -1,0 +1,23 @@
+{
+  "log_path": "/data/ad5x/printer_data/logs/guppyscreen.log",
+  "thumbnail_path": "/data/ad5x/guppyscreen/thumbnails",
+  "display_sleep_sec": 600,
+  "display_rotate": 0,
+  "touch_calibrated": true,
+  "prompt_emergency_stop": true,
+  "guppy_init_script": "/etc/init.d/S80guppyscreen",
+  "default_printer": "AD5M",
+  "printers": {
+    "AD5M": {
+      "moonraker_api_key": false,
+      "moonraker_host": "127.0.0.1",
+      "moonraker_port": 7125,
+      "log_level": "info",
+      "monitored_sensors": [
+        { "id": "extruder", "display_name": "Extruder", "controllable": true, "color": "red" },
+        { "id": "heater_bed", "display_name": "Bed", "controllable": true, "color": "purple" }
+      ],
+      "default_macros": { "load_filament": "LOAD_FILAMENT", "cooldown": "TURN_OFF_HEATERS" }
+    }
+  }
+}

@@ -29,6 +29,38 @@ Not built, not run on a printer. Facts marked MEASURED were read from a real AD5
 - `buildroot/board/ad5m/rootfs-overlay/etc/kiln-board`: board profile (ports, partitions, display) for
   the shared scripts, with the unknowns left blank (MCU boot/reset GPIO numbers).
 
+## Checking a built image
+
+`tools/ad5m-verify-image.sh` unpacks `rootfs.tar` and checks, without a printer: the hand-over hook, tools and
+services (shell syntax), the Klipper config files and modules, the firmware and its checksums, the users, the ELF ABI
+notes (nothing may need a kernel newer than 5.4.61), every shared library the main programs need, and, with
+qemu-user-static, that the image's Python starts and that the image's Klipper accepts its own `printer.cfg` with the
+firmware's MCU data dictionaries (Klipper's test mode: `-d mainboard.dict -d eboard=eboard.dict`). The static part
+was run against a deliberately incomplete fake image (it reported each missing piece); the qemu part has not been run.
+
+## GuppyScreen (the zMod fork)
+
+`buildroot/package/guppyscreen/` builds ghzserg/guppyscreen_ff5m, pinned to commit `acd92c5` (the one read), the
+way its own `ci/build-release.sh` does for the AD5M: the eight submodule patches (applied with GNU `patch`,
+the AD5M framebuffer one included), libhv and spdlog, then `GUPPY_FF5M_SCREEN=1`; translations through
+`msgfmt`. One small patch of ours (`GUPPY_CONFIG`) lets the config and themes live on `/data`. What was read
+from the source: framebuffer 800x480 through `fbdev`, touch through tslib (`TSLIB_TSDEVICE`) with LVGL's own
+calibration screen (`touch_calibrated: true` and the coefficients kept in the config; the shipped `ts.conf`
+has no `linear` stage so the two do not stack), no `wpa_supplicant` client in the FF5M build (Wi-Fi is not set
+up from this screen: the first start takes stock's saved networks, `S42ad5m-wifi`), and it restarts itself
+through `/etc/init.d/S80guppyscreen`.
+
+The screen was written for zMod's Klipper config and sends zMod's macro names. `klipper/ad5m-guppy.cfg` maps the
+ones that have a Kiln equivalent (`AUTO_FULL_BED_LEVEL`, `PID_TUNE_*`, `_T_HEATER`, `BED_LEVEL_SCREWS_TUNE`,
+`LOAD_CELL_TARE`) and answers "not available on Kiln OS yet" for the rest (shell commands, shaper and belt
+calibration, power off, cold pull, nozzle clearing). It also queries a `zmod_color` Klipper object; whether it
+copes with its absence is untested. Its repository's `AGENTS.md` (Russian) sets rules for contributions there:
+minimal diffs, new comments in Russian, no changes to submodules or build settings without reason, memory
+measurements (`VmRSS` etc.) for any PR; they apply if the wizard is ever offered upstream.
+
+Not done: the first-boot setup wizard panels (Klipper side: a variant of `ad5x_setup.py` without the IFS and
+purge box steps; screen side: new LVGL panels in a patch), the `ad5x-fbstream` (screen in the browser) helper.
+
 ## Kernel headers and glibc's minimum kernel (found when the first build ran)
 
 The AD5X's userland is built with 5.10 headers because its stock kernel is 5.10.186 (Kiln starts its own 6.6
@@ -80,7 +112,7 @@ more than 5.4.61. Calls newer than 5.4 that the 5.10 headers expose are probed a
 
 ## Not done yet
 
-1. `package/guppyscreen` and the setup wizard panels.
+1. The setup wizard (an AD5M variant of `ad5x_setup.py` and the GuppyScreen panels); the GuppyScreen package itself exists but has never been built.
 2. AD5M macros layer (print start, prime line, quick actions) and `setup.cfg`.
 3. Build the MCU firmware for the AD5M (`tools/build_mcu_ad5m.sh`: untested, the load cell C code may need changes for the newer Klipper) and confirm the reset/boot GPIO lines.
 4. **Load cell support, which printing needs.** The probe's trigger (PB4) comes from the load cell board

@@ -95,7 +95,7 @@ BR2_PACKAGE_FLUIDD=y
 
 # Touch screen UI: GuppyScreen (not HelixScreen) on /dev/fb0 800x480, touch from the
 # SoC's resistive controller through tslib.
-# TODO: these two packages do not exist yet (package/guppyscreen, package/ad5m-system)
+# GuppyScreen: package/guppyscreen (the zMod fork); ad5m-system: package/ad5m-system
 BR2_PACKAGE_TSLIB=y
 BR2_PACKAGE_GUPPYSCREEN=y
 BR2_PACKAGE_AD5M_SYSTEM=y

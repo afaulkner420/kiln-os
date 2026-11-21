@@ -1,0 +1,39 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# GuppyScreen on the Adventurer 5M's panel. WORK IN PROGRESS, NOT TESTED ON A PRINTER.
+# The program's own "restart" action runs this script (guppy_init_script in guppyconfig.json),
+# so the name and the start/stop/restart verbs are part of the contract.
+#
+# The config and the themes live on the data partition (the root is read-only): /data/ad5x/guppyscreen/,
+# created from /usr/share/guppyscreen at the first start. GuppyScreen rewrites its config at every start
+# and keeps the touch calibration coefficients in it. To calibrate again: remove "touch_calibration_coeff"
+# from the file (or delete it) and restart. Touch: tslib on /dev/input/event0, /etc/ts.conf.
+DIR=/data/ad5x/guppyscreen
+CONF=$DIR/guppyconfig.json
+PIDFILE=/var/run/guppyscreen.pid
+
+case "$1" in
+start)
+	[ -x /usr/bin/guppyscreen ] || exit 0
+	[ -e /data/ad5x/guppyscreen.disable ] && { echo "guppyscreen: disabled (/data/ad5x/guppyscreen.disable)"; exit 0; }
+	mkdir -p $DIR/thumbnails /data/ad5x/printer_data/logs
+	[ -f $CONF ] || cp /usr/share/guppyscreen/guppyconfig.json $CONF
+	# themes next to the config, refreshed from the image so an update brings new ones
+	rm -rf $DIR/themes; mkdir -p $DIR/themes; cp /usr/share/guppyscreen/themes/*.json $DIR/themes/
+	# the panel and the touch device (measured: 800x480 fb0, SoC touch controller on event0)
+	for i in 1 2 3 4 5 6 7 8 9 10; do [ -e /dev/fb0 ] && [ -e /dev/input/event0 ] && break; sleep 1; done
+	[ -e /dev/fb0 ] || { echo "guppyscreen: no /dev/fb0"; exit 0; }
+	TSLIB_TSDEVICE=/dev/input/event0 TSLIB_CONFFILE=/etc/ts.conf \
+	GUPPY_CONFIG=$CONF LANG=${LANG:-C} \
+		start-stop-daemon -S -b -m -p $PIDFILE -x /usr/bin/guppyscreen
+	echo "guppyscreen: started"
+	;;
+stop)
+	start-stop-daemon -K -p $PIDFILE 2>/dev/null
+	rm -f $PIDFILE
+	;;
+restart)
+	"$0" stop; sleep 1; "$0" start
+	;;
+esac
+exit 0

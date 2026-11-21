@@ -231,6 +231,9 @@ On the printer (stock or zMod running), as root:
   3. sh /data/ad5m-install.sh --check          (changes nothing)
   4. sh /data/ad5m-install.sh /data/rootfs.tar (backup + install; the next boot is still stock)
   5. then follow docs/ad5m-boot.md: MCU bring-up first, activation last
+
+Before step 1, check the image on this machine:   bash tools/ad5m-verify-image.sh
+(needs: sudo apt install qemu-user-static, for the Klipper configuration test)
 TXT
 	( cd "$D" && ls -la )
 fi
@@ -238,5 +241,6 @@ STEP=done
 say "Done"
 echo "Results: $D"
 [ -z "$IN_WSL" ] || echo "In Windows Explorer: \\\\wsl\$\\${WSL_DISTRO_NAME:-<distro>}${D//\//\\}"
+echo "Next: bash tools/ad5m-verify-image.sh   (checks the image before it goes near a printer)"
 echo "Log: $LOG"
 exit 0

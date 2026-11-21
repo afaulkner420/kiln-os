@@ -99,6 +99,10 @@ mv "$OS/root.new" "$OS/root" && rm -rf "$OS/root.old" && sync
 cp "$OS/root/usr/share/ad5x/stock-side/ad5m-init" /sbin/ad5m-init.new && chmod 755 /sbin/ad5m-init.new &&
 	mv /sbin/ad5m-init.new /sbin/ad5m-init && sync || { echo "could not install /sbin/ad5m-init" >&2; exit 1; }
 mkdir -p "$AD5M_DATA/ad5x/handoff"
+# The first Kiln OS boots must not write to the boards: until the reset/boot lines are confirmed
+# (ad5m-mcu probe) and the way back (restore-stock) is checked, ad5m-mcu only starts the eboard.
+# Remove this file to allow flashing (docs/ad5m-first-test.md).
+[ -e "$AD5M_DATA/ad5x/mcu.disable" ] || { : > "$AD5M_DATA/ad5x/mcu.disable" && echo "Created $AD5M_DATA/ad5x/mcu.disable: Kiln OS will not flash the boards yet."; }
 echo "Installed: Kiln OS root in $OS/root, hook /sbin/ad5m-init. The next boot is still STOCK."
 
 # --- 5. activate (optional) --------------------------------------------------------------

@@ -1,0 +1,14 @@
+config BR2_PACKAGE_GUPPYSCREEN
+	bool "guppyscreen"
+	depends on BR2_INSTALL_LIBSTDCPP
+	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_7
+	select BR2_PACKAGE_TSLIB
+	help
+	  GuppyScreen, the touch screen interface for Klipper/Moonraker, in
+	  the fork zMod uses on the Flashforge Adventurer 5M / 5M Pro
+	  (ghzserg/guppyscreen_ff5m). Work in progress, not built yet.
+
+	  https://github.com/ghzserg/guppyscreen_ff5m
+
+comment "guppyscreen needs a toolchain w/ C++, gcc >= 7"
+	depends on !BR2_INSTALL_LIBSTDCPP || !BR2_TOOLCHAIN_GCC_AT_LEAST_7

@@ -52,7 +52,7 @@ endef
 # the AD5X's (klipper.mk installs those: printer.cfg includes ad5x.cfg, unit.cfg is read from
 # stock's AD5X settings, macros/*.cfg are the IFS and purge box ones)
 define AD5M_SYSTEM_INSTALL_CONFIG
-	for f in ad5m.cfg ad5m-pro.cfg ad5m-loadcell.cfg ad5m-macros.cfg; do \
+	for f in ad5m.cfg ad5m-pro.cfg ad5m-loadcell.cfg ad5m-macros.cfg ad5m-guppy.cfg; do \
 		$(INSTALL) -D -m 0644 $(AD5M_SYSTEM_KLIPPER)/$$f \
 			$(TARGET_DIR)/usr/share/ad5x/config/$$f || exit 1; \
 	done
