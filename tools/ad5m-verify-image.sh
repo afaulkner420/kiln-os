@@ -15,7 +15,7 @@
 #   1. static checks on the files: the hand-over hook, tools, init scripts (sh -n), config files, the
 #      boards' firmware and its checksums, the users, the glibc minimum kernel (ELF ABI note: must not
 #      exceed 5.4.61, the printer's kernel), every shared library the main programs need;
-#   2. with qemu-user-static (sudo apt install qemu-user-static): runs the image's own Python and Klipper
+#   2. with qemu for ARM (sudo apt install qemu-user-static, or qemu-user if apt does not know the first): runs the image's own Python and Klipper
 #      against the image's own printer.cfg and the MCU data dictionaries, in Klipper's test mode. That
 #      catches config mistakes (pins, missing modules, macro syntax) without any hardware.
 # It needs sudo to unpack the image with the right ownership and to chroot. Nothing outside the work
@@ -116,14 +116,14 @@ done
 # ---------------------------------------------------------------------------------------
 section "Klipper configuration files"
 D=$R/usr/share/ad5x
-for f in config/ad5m.cfg config/ad5m-macros.cfg config/ad5m-guppy.cfg config/ad5m-pro.cfg config/ad5m-loadcell.cfg defaults/printer.cfg defaults/local.cfg; do
+for f in config/ad5m.cfg config/ad5m-macros.cfg config/ad5m-guppy.cfg config/ad5m-setup.cfg config/ad5m-pro.cfg config/ad5m-loadcell.cfg defaults/printer.cfg defaults/local.cfg; do
 	[ -f "$D/$f" ] && ok "$f" || bad "missing: usr/share/ad5x/$f"
 done
 grep -q 'ad5m.cfg' "$D/defaults/printer.cfg" 2>/dev/null && ok "defaults/printer.cfg includes ad5m.cfg" || bad "defaults/printer.cfg is not the AD5M's (it must include ad5m.cfg)"
 grep -q 'ad5x.cfg' "$D/defaults/printer.cfg" 2>/dev/null && bad "defaults/printer.cfg still includes ad5x.cfg"
 [ -e "$D/defaults/unit.cfg" ] && bad "AD5X defaults/unit.cfg is in the image"
 [ -d "$D/defaults/macros" ] && bad "AD5X defaults/macros/ is in the image"
-for m in flashforge_loadcell.py flashforge_tvoc.py ad5x_sound.py ad5x_log.py; do
+for m in flashforge_loadcell.py flashforge_tvoc.py ad5x_sound.py ad5x_log.py ad5m_setup.py; do
 	f=$(find "$R/usr/lib/klipper" -name "${m%.py}.py*" -o -name "${m%.py}.cpython*.pyc" 2>/dev/null | head -n 1)
 	[ -n "$f" ] && ok "Klipper module $m" || bad "Klipper module missing: $m"
 done
@@ -142,7 +142,12 @@ fi
 # ---------------------------------------------------------------------------------------
 section "Users"
 grep -q '^klipper:x:101:' "$R/etc/passwd" 2>/dev/null && ok "user klipper (uid 101)" || bad "no user klipper with uid 101 in /etc/passwd"
-grep -q '^root:' "$R/etc/shadow" 2>/dev/null && ok "root in /etc/shadow" || bad "no root entry in /etc/shadow"
+# /etc/shadow is root-only (mode 600): read it with sudo, or say it could not be read
+if [ -n "$SUDO" ]; then
+	$SUDO grep -q '^root:' "$R/etc/shadow" 2>/dev/null && ok "root in /etc/shadow" || bad "no root entry in /etc/shadow"
+else
+	warn "/etc/shadow not checked (needs sudo)"
+fi
 
 # ---------------------------------------------------------------------------------------
 section "Kernel compatibility (the printer runs 5.4.61)"
@@ -178,14 +183,29 @@ done
 # ---------------------------------------------------------------------------------------
 if [ -n "$RUN" ]; then
 section "Running the image (qemu-user): Python and Klipper's configuration test"
-	if ! command -v qemu-arm-static >/dev/null 2>&1; then
-		warn "qemu-arm-static not found: sudo apt install qemu-user-static, then run this again"
+	QEMU=$(command -v qemu-arm-static 2>/dev/null || command -v qemu-arm 2>/dev/null)
+	if [ -z "$QEMU" ]; then
+		warn "no qemu for ARM: sudo apt install qemu-user-static (or, if apt does not know it, sudo apt install qemu-user), then run this again"
+	elif [ -z "$SUDO" ]; then
+		warn "no sudo: the qemu test is skipped"
 	else
-		QEMU=$(command -v qemu-arm-static)
-		$SUDO cp "$QEMU" "$R/qemu-arm-static"
-		$SUDO mkdir -p "$R/dev" "$R/proc" "$R/tmp"
-		$SUDO mount --bind /dev "$R/dev" 2>/dev/null; $SUDO mount -t proc proc "$R/proc" 2>/dev/null
-		inroot() { $SUDO chroot "$R" /qemu-arm-static "$@"; }
+		# Two ways to run the image's ARM programs:
+		#  - a static qemu (qemu-user-static): chroot into the image and run it there;
+		#  - the ordinary qemu-arm (package qemu-user): no chroot; "-L <image>" makes qemu look for the
+		#    program's loader and libraries, and for every absolute path that exists in the image, inside it.
+		#    Files the program creates must exist in the image first, or they land on the host: the log,
+		#    the output file and the variables file are created below before they are used.
+		MODE=direct
+		case "$QEMU" in *-static) MODE=chroot ;; esac
+		out "      qemu: $QEMU ($MODE mode)"
+		$SUDO mkdir -p "$R/dev" "$R/proc" "$R/tmp" "$R/home/klipper/printer_data/config" "$R/home/klipper/printer_data/gcodes" "$R/home/klipper/printer_data/logs"
+		if [ "$MODE" = chroot ]; then
+			$SUDO cp "$QEMU" "$R/qemu-arm-static"
+			$SUDO mount --bind /dev "$R/dev" 2>/dev/null; $SUDO mount -t proc proc "$R/proc" 2>/dev/null
+			inroot() { $SUDO chroot "$R" /qemu-arm-static "$@"; }
+		else
+			inroot() { local prog=$1; shift; $SUDO "$QEMU" -L "$R" "$R$prog" "$@"; }
+		fi
 		pyout=$(inroot /usr/bin/python3 -c 'import sys; print(sys.version.split()[0])' 2>&1)
 		if [ $? = 0 ]; then ok "the image's Python starts: $pyout"; else bad "the image's Python does not start under qemu: $pyout"; fi
 		for mod in jinja2 serial greenlet cffi numpy can tornado; do
@@ -199,6 +219,7 @@ section "Running the image (qemu-user): Python and Klipper's configuration test"
 			$SUDO cp "$D"/defaults/*.cfg "$CFG"/ 2>/dev/null
 			$SUDO cp "$DICT/mainboard.dict" "$R/tmp/mainboard.dict"; $SUDO cp "$DICT/eboard.dict" "$R/tmp/eboard.dict"
 			$SUDO sh -c "printf 'G28\nM105\nM104 S200\nM140 S60\nSET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0\nGET_POSITION\n' > '$R/tmp/test.gcode'"
+			$SUDO touch "$R/tmp/klippy.log" "$R/tmp/out.bin" "$R/tmp/klippy.stdout" "$R/home/klipper/printer_data/config/variables.cfg"
 			klog=$R/tmp/klippy.log
 			inroot /usr/bin/python3 /usr/lib/klipper/klippy/klippy.py /tmp/cfg/printer.cfg \
 				-i /tmp/test.gcode -o /tmp/out.bin -l /tmp/klippy.log \

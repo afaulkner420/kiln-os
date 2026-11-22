@@ -29,6 +29,16 @@ Not built, not run on a printer. Facts marked MEASURED were read from a real AD5
 - `buildroot/board/ad5m/rootfs-overlay/etc/kiln-board`: board profile (ports, partitions, display) for
   the shared scripts, with the unknowns left blank (MCU boot/reset GPIO numbers).
 
+## Setup wizard, Klipper side
+
+`klipper/extras/ad5m_setup.py` (+ `ad5m-setup.cfg`): Kiln's wizard module with the AD5X-only steps replaced; the
+AD5M self-check includes the load cell tare, the mesh step wipes and cools the nozzle in abortable pieces, the
+Z offset step uses the AD5M's own macros and centred coordinates. The print Z offset follows the AD5X scheme
+(`SET_GCODE_OFFSET` saves `zoffset`, `START_PRINT` applies it). `tools/derive_ad5m_setup.py` regenerates the
+module from Kiln's (byte for byte), `tools/test_ad5m_setup.py` runs it against a mock printer (construction,
+status contract, self-check branches, dispatch rules, patch geometry, the mesh step's command order): all pass.
+Not run in Klipper itself. The screen side is specified in `docs/ad5m-wizard.md` and not written yet.
+
 ## Checking a built image
 
 `tools/ad5m-verify-image.sh` unpacks `rootfs.tar` and checks, without a printer: the hand-over hook, tools and
@@ -112,7 +122,7 @@ more than 5.4.61. Calls newer than 5.4 that the 5.10 headers expose are probed a
 
 ## Not done yet
 
-1. The setup wizard (an AD5M variant of `ad5x_setup.py` and the GuppyScreen panels); the GuppyScreen package itself exists but has never been built.
+1. The GuppyScreen wizard panels (the Klipper side exists: see above); the GuppyScreen package builds (your image has it) but has never run on a printer.
 2. AD5M macros layer (print start, prime line, quick actions) and `setup.cfg`.
 3. Build the MCU firmware for the AD5M (`tools/build_mcu_ad5m.sh`: untested, the load cell C code may need changes for the newer Klipper) and confirm the reset/boot GPIO lines.
 4. **Load cell support, which printing needs.** The probe's trigger (PB4) comes from the load cell board
