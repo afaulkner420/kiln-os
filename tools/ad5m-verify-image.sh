@@ -198,13 +198,16 @@ section "Running the image (qemu-user): Python and Klipper's configuration test"
 		MODE=direct
 		case "$QEMU" in *-static) MODE=chroot ;; esac
 		out "      qemu: $QEMU ($MODE mode)"
+		# Klipper's modules live next to klippy.py: say so explicitly, so the test does not depend on how
+		# Python works out its script directory under emulation; and do not write bytecode into the image
+		QENV="-E PYTHONPATH=/usr/lib/klipper/klippy -E PYTHONDONTWRITEBYTECODE=1"
 		$SUDO mkdir -p "$R/dev" "$R/proc" "$R/tmp" "$R/home/klipper/printer_data/config" "$R/home/klipper/printer_data/gcodes" "$R/home/klipper/printer_data/logs"
 		if [ "$MODE" = chroot ]; then
 			$SUDO cp "$QEMU" "$R/qemu-arm-static"
 			$SUDO mount --bind /dev "$R/dev" 2>/dev/null; $SUDO mount -t proc proc "$R/proc" 2>/dev/null
-			inroot() { $SUDO chroot "$R" /qemu-arm-static "$@"; }
+			inroot() { $SUDO chroot "$R" /qemu-arm-static $QENV "$@"; }
 		else
-			inroot() { local prog=$1; shift; $SUDO "$QEMU" -L "$R" "$R$prog" "$@"; }
+			inroot() { local prog=$1; shift; $SUDO "$QEMU" $QENV -L "$R" "$R$prog" "$@"; }
 		fi
 		pyout=$(inroot /usr/bin/python3 -c 'import sys; print(sys.version.split()[0])' 2>&1)
 		if [ $? = 0 ]; then ok "the image's Python starts: $pyout"; else bad "the image's Python does not start under qemu: $pyout"; fi
@@ -217,20 +220,46 @@ section "Running the image (qemu-user): Python and Klipper's configuration test"
 		if [ -n "$V" ] && [ -f "$DICT/mainboard.dict" ] && [ -f "$DICT/eboard.dict" ]; then
 			CFG=$R/tmp/cfg; $SUDO mkdir -p "$CFG" "$R/home/klipper/printer_data/gcodes" "$R/home/klipper/printer_data/logs"
 			$SUDO cp "$D"/defaults/*.cfg "$CFG"/ 2>/dev/null
+			if [ "$MODE" = direct ]; then
+				# This qemu opens image paths but does not resolve them for stat(), which Klipper uses to check
+				# includes and files: work on COPIES of the config files with every absolute image path turned
+				# into the real path in the unpacked image (the image's own files are not changed).
+				$SUDO cp "$D"/config/*.cfg "$CFG"/ 2>/dev/null
+				$SUDO sed -i -e "s#/usr/share/ad5x/config/#$CFG/#g" -e "s#/home/klipper/printer_data#$R/home/klipper/printer_data#g" "$CFG"/*.cfg
+			fi
 			$SUDO cp "$DICT/mainboard.dict" "$R/tmp/mainboard.dict"; $SUDO cp "$DICT/eboard.dict" "$R/tmp/eboard.dict"
 			$SUDO sh -c "printf 'G28\nM105\nM104 S200\nM140 S60\nSET_HEATER_TEMPERATURE HEATER=extruder TARGET=0\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0\nGET_POSITION\n' > '$R/tmp/test.gcode'"
 			$SUDO touch "$R/tmp/klippy.log" "$R/tmp/out.bin" "$R/tmp/klippy.stdout" "$R/home/klipper/printer_data/config/variables.cfg"
+			out "      klippy dir: $(ls "$R"/usr/lib/klipper/klippy/*.py 2>/dev/null | wc -l) .py files; util.py: $([ -f "$R/usr/lib/klipper/klippy/util.py" ] && echo present || echo MISSING)"
+			out "      python sys.path under qemu: $(inroot /usr/bin/python3 -c 'import sys; print(sys.path)' 2>&1 | head -n 2 | tr '\n' ' ')"
 			klog=$R/tmp/klippy.log
-			inroot /usr/bin/python3 /usr/lib/klipper/klippy/klippy.py /tmp/cfg/printer.cfg \
-				-i /tmp/test.gcode -o /tmp/out.bin -l /tmp/klippy.log \
-				-d /tmp/mainboard.dict -d eboard=/tmp/eboard.dict >/tmp/klippy.stdout 2>&1
+			# Under plain qemu-arm (direct mode) Python reached files by the image's own absolute paths, but its module
+			# finder did not find Klipper's modules that way, while the standard library, reached by the host path,
+			# imports fine. So in direct mode Klipper is run by its host path and given host paths; the includes in
+			# the config are opened by absolute image paths, which qemu does resolve into the image.
+			if [ "$MODE" = direct ]; then
+				KDIR=$R/usr/lib/klipper/klippy; QP=$R
+				QENV="-E PYTHONPATH=$KDIR -E PYTHONDONTWRITEBYTECODE=1"
+			else
+				KDIR=/usr/lib/klipper/klippy; QP=
+			fi
+			g_imp=$(inroot /usr/bin/python3 -c "import sys; sys.path.insert(0, '/usr/lib/klipper/klippy'); import util; print('imported', util.__file__)" 2>&1 | tail -n 1)
+			h_imp=$(inroot /usr/bin/python3 -c "import sys; sys.path.insert(0, '$KDIR'); import util; print('imported', util.__file__)" 2>&1 | tail -n 1)
+			out "      import util by the image's path: $g_imp"
+			out "      import util by the host path:    $h_imp"
+			inroot /usr/bin/python3 "$KDIR/klippy.py" "$QP/tmp/cfg/printer.cfg" \
+				-i "$QP/tmp/test.gcode" -o "$QP/tmp/out.bin" -l "$QP/tmp/klippy.log" \
+				-d "$QP/tmp/mainboard.dict" -d "eboard=$QP/tmp/eboard.dict" >"$WORK/klippy.stdout" 2>&1
+			krc=$?
 			if grep -q "Config error\|Unknown config object\|Option '.*' is not valid\|Traceback" "$klog" 2>/dev/null; then
 				bad "Klipper rejected the configuration:"
 				grep -m 6 -B1 "Config error\|Unknown config object\|Option '.*' is not valid\|Traceback\|Error" "$klog" 2>/dev/null | sed 's/^/        /' | tee -a "$REPORT" >/dev/null
 			elif grep -q "Starting Klippy" "$klog" 2>/dev/null; then
 				ok "Klipper loaded printer.cfg with the firmware's data dictionaries"
 			else
-				warn "no clear result from Klipper's test run: see $klog (use --keep)"
+				warn "no clear result from Klipper's test run (exit status ${krc:-?}); what it wrote follows"
+				{ echo "      --- klippy.log (last lines):"; tail -n 25 "$klog" 2>/dev/null | sed 's/^/      /'
+				  echo "      --- klippy output (last lines):"; tail -n 25 "$WORK/klippy.stdout" 2>/dev/null | sed 's/^/      /'; } | tee -a "$REPORT" >/dev/null
 			fi
 			# the macros the screen and the slicer call must exist as commands
 			for c in START_PRINT PRINT_START END_PRINT PAUSE RESUME CANCEL_PRINT AUTO_BED_LEVEL LOAD_CELL_TARE AUTO_FULL_BED_LEVEL PID_TUNE_BED; do
